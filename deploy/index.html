@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Week 2 — Transport Fee & Route Billing System | FirstCry Intellitots</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-deep: #06080f;
+  --bg-surface: #0d1117;
+  --bg-card: rgba(17, 24, 39, 0.7);
+  --bg-glass: rgba(255,255,255,0.04);
+  --border: rgba(255,255,255,0.07);
+  --border-bright: rgba(99,102,241,0.3);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent: #818cf8;
+  --accent-bright: #a5b4fc;
+  --accent-glow: rgba(99,102,241,0.15);
+  --green: #34d399;
+  --green-glow: rgba(52,211,153,0.15);
+  --amber: #fbbf24;
+  --rose: #fb7185;
+  --cyan: #22d3ee;
+  --slide-pad: 72px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Background Mesh ── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 20%, rgba(99,102,241,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 80%, rgba(34,211,238,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(251,191,36,0.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Progress Bar ── */
+#progress-bar {
+  position: fixed; top: 0; left: 0; height: 3px;
+  background: linear-gradient(90deg, #6366f1, #22d3ee, #818cf8);
+  z-index: 1000;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 12px rgba(99,102,241,0.5);
+}
+
+/* ── Slide Counter ── */
+#slide-counter {
+  position: fixed; bottom: 28px; right: 36px;
+  font-size: 13px; font-weight: 600; color: var(--text-muted);
+  z-index: 1000; letter-spacing: 1px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Navigation Dots ── */
+#nav-dots {
+  position: fixed; right: 20px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 1000;
+}
+.nav-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255,255,255,0.15); cursor: pointer;
+  transition: all 0.3s ease; border: none; outline: none;
+}
+.nav-dot:hover { background: rgba(255,255,255,0.35); transform: scale(1.3); }
+.nav-dot.active {
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+  transform: scale(1.3);
+}
+
+/* ── Nav Arrows ── */
+.nav-arrow {
+  position: fixed; bottom: 24px; z-index: 1000;
+  background: var(--bg-glass); border: 1px solid var(--border);
+  color: var(--text-secondary); width: 40px; height: 40px;
+  border-radius: 10px; cursor: pointer; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.25s ease; backdrop-filter: blur(10px);
+}
+.nav-arrow:hover { background: var(--accent-glow); border-color: var(--border-bright); color: var(--accent-bright); }
+#prev-btn { left: 36px; }
+#next-btn { left: 86px; }
+
+/* ── Slides ── */
+.slide {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: var(--slide-pad) 90px var(--slide-pad) 80px;
+  opacity: 0; transform: translateX(60px);
+  transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none; z-index: 1;
+}
+.slide.active {
+  opacity: 1; transform: translateX(0);
+  pointer-events: auto; z-index: 2;
+}
+.slide.exit-left {
+  opacity: 0; transform: translateX(-60px);
+}
+
+/* ── Slide Label ── */
+.slide-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 3px;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: 10px;
+}
+
+/* ── Headings ── */
+.slide h1 {
+  font-size: 42px; font-weight: 800; line-height: 1.15;
+  background: linear-gradient(135deg, #f1f5f9, #cbd5e1);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.slide h2 {
+  font-size: 32px; font-weight: 700; color: var(--text-primary);
+  margin-bottom: 8px; line-height: 1.2;
+}
+.slide h3 {
+  font-size: 20px; font-weight: 600; color: var(--accent-bright);
+  margin-bottom: 6px;
+}
+.slide .subtitle {
+  font-size: 17px; color: var(--text-secondary); line-height: 1.6;
+  max-width: 700px; font-weight: 400;
+}
+
+/* ── Cards Grid ── */
+.cards-grid {
+  display: grid; gap: 16px; margin-top: 24px;
+}
+.cards-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+.cards-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+.glass-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px; padding: 22px 24px;
+  backdrop-filter: blur(12px);
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+.glass-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-bright);
+}
+.glass-card .card-icon {
+  font-size: 28px; margin-bottom: 10px; display: block;
+}
+.glass-card h4 {
+  font-size: 15px; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.glass-card p, .glass-card li {
+  font-size: 13.5px; color: var(--text-secondary); line-height: 1.65;
+}
+.glass-card ul { list-style: none; padding: 0; }
+.glass-card ul li::before {
+  content: '→'; margin-right: 8px; color: var(--accent); font-weight: 600;
+}
+
+/* ── Limitation Tags ── */
+.limitation-tag {
+  display: inline-block; font-size: 11.5px; font-weight: 500;
+  padding: 3px 10px; border-radius: 6px; margin: 2px 4px 2px 0;
+}
+.limitation-tag.red { background: rgba(251,113,133,0.12); color: var(--rose); border: 1px solid rgba(251,113,133,0.2); }
+.limitation-tag.amber { background: rgba(251,191,36,0.1); color: var(--amber); border: 1px solid rgba(251,191,36,0.2); }
+
+/* ── Comparison Table ── */
+.comparison-table {
+  width: 100%; border-collapse: separate; border-spacing: 0;
+  margin-top: 20px; font-size: 13px;
+  background: var(--bg-card); border-radius: 14px;
+  overflow: hidden; border: 1px solid var(--border);
+}
+.comparison-table thead th {
+  background: rgba(99,102,241,0.08);
+  padding: 14px 16px; text-align: left;
+  font-weight: 700; font-size: 12.5px;
+  color: var(--accent-bright); letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+.comparison-table thead th:last-child {
+  background: rgba(99,102,241,0.18);
+  color: #c7d2fe;
+}
+.comparison-table tbody td {
+  padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+}
+.comparison-table tbody tr:last-child td { border-bottom: none; }
+.comparison-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.comparison-table tbody td:first-child { font-weight: 600; color: var(--text-primary); font-size: 12.5px; }
+.comparison-table tbody td:last-child { background: rgba(99,102,241,0.05); }
+.check { color: var(--green); font-weight: 700; }
+.cross { color: var(--rose); font-weight: 600; }
+.partial { color: var(--amber); font-weight: 600; }
+
+/* ── Feature Blocks ── */
+.feature-row {
+  display: flex; gap: 14px; margin-top: 18px; flex-wrap: wrap;
+}
+.feature-chip {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px 18px; flex: 1; min-width: 200px;
+  transition: border-color 0.3s ease;
+}
+.feature-chip:hover { border-color: var(--border-bright); }
+.feature-chip .fc-icon { font-size: 24px; }
+.feature-chip .fc-text h5 { font-size: 13.5px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+.feature-chip .fc-text span { font-size: 12px; color: var(--text-muted); }
+
+/* ── Tech Stack ── */
+.tech-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.tech-item:last-child { border-bottom: none; }
+.tech-badge {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 8px; min-width: 110px; text-align: center;
+}
+.tech-badge.frontend { background: rgba(99,102,241,0.15); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.25); }
+.tech-badge.backend { background: rgba(52,211,153,0.12); color: var(--green); border: 1px solid rgba(52,211,153,0.2); }
+.tech-badge.database { background: rgba(34,211,238,0.12); color: var(--cyan); border: 1px solid rgba(34,211,238,0.2); }
+.tech-badge.tools { background: rgba(251,191,36,0.1); color: var(--amber); border: 1px solid rgba(251,191,36,0.2); }
+.tech-reason { font-size: 13px; color: var(--text-secondary); }
+.tech-name { font-weight: 600; color: var(--text-primary); font-size: 13.5px; }
+
+/* ── Timeline ── */
+.timeline {
+  display: flex; flex-direction: column; gap: 0; margin-top: 18px;
+}
+.tl-row {
+  display: flex; align-items: stretch; gap: 16px;
+}
+.tl-marker {
+  display: flex; flex-direction: column; align-items: center; width: 24px;
+}
+.tl-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--accent);
+}
+.tl-dot.done { background: var(--green); border-color: var(--green); }
+.tl-dot.current { background: var(--accent); border-color: var(--accent-bright); box-shadow: 0 0 8px var(--accent); }
+.tl-dot.future { background: transparent; border-color: var(--text-muted); }
+.tl-line { width: 2px; flex: 1; background: rgba(255,255,255,0.08); }
+.tl-content {
+  padding: 6px 0 20px; flex: 1;
+}
+.tl-content h5 { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+.tl-content p { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+.tl-status {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 4px;
+  display: inline-block; margin-top: 4px;
+}
+.tl-status.done { background: rgba(52,211,153,0.12); color: var(--green); }
+.tl-status.progress { background: rgba(99,102,241,0.15); color: var(--accent-bright); }
+.tl-status.planned { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+
+/* ── Benefits ── */
+.benefit-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px;
+}
+.benefit-item {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px 20px;
+  transition: border-color 0.3s ease;
+}
+.benefit-item:hover { border-color: var(--border-bright); }
+.benefit-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px; font-weight: 800; color: var(--accent);
+  line-height: 1; min-width: 30px;
+}
+.benefit-item h5 { font-size: 14px; font-weight: 600; margin-bottom: 3px; color: var(--text-primary); }
+.benefit-item p { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+
+/* ── Title Slide Special ── */
+.title-slide {
+  align-items: center; text-align: center;
+  justify-content: center;
+}
+.title-slide h1 {
+  font-size: 52px; margin-bottom: 16px;
+}
+.title-slide .org-badge {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--bg-glass); border: 1px solid var(--border);
+  border-radius: 50px; padding: 8px 22px 8px 14px;
+  margin-bottom: 28px;
+}
+.org-badge .org-icon {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.org-badge span {
+  font-size: 14px; font-weight: 600; color: var(--text-secondary);
+}
+.title-meta {
+  display: flex; gap: 32px; margin-top: 32px;
+  justify-content: center;
+}
+.title-meta-item {
+  text-align: center;
+}
+.title-meta-item .meta-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;
+}
+.title-meta-item .meta-value {
+  font-size: 14px; font-weight: 600; color: var(--text-secondary);
+}
+
+/* ── Q&A Slide ── */
+.qa-slide {
+  align-items: center; text-align: center; justify-content: center;
+}
+.qa-icon {
+  font-size: 64px; margin-bottom: 20px;
+  animation: float 3s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.qa-slide h1 { font-size: 48px; margin-bottom: 10px; }
+
+/* ── Stat Highlight ── */
+.stat-highlight {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px; font-weight: 800; color: var(--accent-bright);
+}
+
+/* ── Two Column Layout ── */
+.two-col {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 28px;
+  margin-top: 20px; align-items: start;
+}
+
+/* ── Scrollable content ── */
+.slide-scroll {
+  overflow-y: auto; max-height: calc(100vh - 160px);
+  padding-right: 12px;
+}
+.slide-scroll::-webkit-scrollbar { width: 4px; }
+.slide-scroll::-webkit-scrollbar-track { background: transparent; }
+.slide-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Animate children ── */
+.slide.active .anim {
+  animation: fadeInUp 0.5s ease forwards;
+  opacity: 0;
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.anim:nth-child(1) { animation-delay: 0.08s; }
+.anim:nth-child(2) { animation-delay: 0.16s; }
+.anim:nth-child(3) { animation-delay: 0.24s; }
+.anim:nth-child(4) { animation-delay: 0.32s; }
+.anim:nth-child(5) { animation-delay: 0.40s; }
+.anim:nth-child(6) { animation-delay: 0.48s; }
+.anim:nth-child(7) { animation-delay: 0.56s; }
+.anim:nth-child(8) { animation-delay: 0.64s; }
+
+/* ── Keyboard hint ── */
+#kb-hint {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: var(--text-muted); z-index: 1000;
+  display: flex; align-items: center; gap: 6px;
+  opacity: 0.6;
+}
+#kb-hint kbd {
+  background: var(--bg-glass); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 7px; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+
+/* ── Source citation ── */
+.source {
+  font-size: 11px; color: var(--text-muted); font-style: italic;
+  margin-top: 4px;
+}
+
+/* ── Divider ── */
+.divider {
+  height: 1px; background: var(--border); margin: 16px 0;
+}
+
+.inline-accent { color: var(--accent-bright); font-weight: 600; }
+.inline-green { color: var(--green); font-weight: 600; }
+.inline-amber { color: var(--amber); font-weight: 600; }
+.inline-rose { color: var(--rose); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- Progress Bar -->
+<div id="progress-bar" style="width: 0%"></div>
+
+<!-- Slide Counter -->
+<div id="slide-counter">01 / 13</div>
+
+<!-- Navigation Dots -->
+<div id="nav-dots"></div>
+
+<!-- Navigation Arrows -->
+<button class="nav-arrow" id="prev-btn" onclick="prevSlide()">←</button>
+<button class="nav-arrow" id="next-btn" onclick="nextSlide()">→</button>
+
+<!-- Keyboard Hint -->
+<div id="kb-hint">
+  <kbd>←</kbd> <kbd>→</kbd> to navigate &nbsp;|&nbsp; <kbd>F</kbd> fullscreen
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 01 — TITLE -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide title-slide active" data-slide="0">
+  <div class="org-badge anim">
+    <div class="org-icon">🎓</div>
+    <span>FirstCry Intellitots</span>
+  </div>
+  <h1 class="anim">Transport Fee &<br>Route Billing System</h1>
+  <p class="subtitle anim" style="text-align:center; max-width: 600px;">
+    Week 2 — Literature Survey, Existing System Analysis & Proposed Solution
+  </p>
+  <div class="title-meta anim">
+    <div class="title-meta-item">
+      <div class="meta-label">Presented By</div>
+      <div class="meta-value">Manvith Kumar (252U1R8014)<br>Nithin (252U1R8010)</div>
+    </div>
+    <div class="title-meta-item">
+      <div class="meta-label">Week</div>
+      <div class="meta-value">02 of 04</div>
+    </div>
+    <div class="title-meta-item">
+      <div class="meta-label">Date</div>
+      <div class="meta-value">20 June 2026</div>
+    </div>
+    <div class="title-meta-item">
+      <div class="meta-label">Organization</div>
+      <div class="meta-value">FirstCry Intellitots</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 02 — RECAP FROM WEEK 1 -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="1">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Week 1 Recap</div>
+    <h2 class="anim">Problem Statement & Objectives</h2>
+    <p class="subtitle anim" style="margin-bottom: 24px;">
+      Setting context — what we identified and where we're headed.
+    </p>
+
+    <div class="two-col anim">
+      <div class="glass-card">
+        <span class="card-icon">🎯</span>
+        <h4>Problem Statement</h4>
+        <p>
+          FirstCry Intellitots manages transport for multiple routes across its preschool centre in Pune.
+          Currently, <span class="inline-rose">route assignments, fee collection, payment tracking,
+          and parent communication are handled manually</span> via registers and spreadsheets — leading to
+          missed payments, billing errors, and zero visibility into transport profitability.
+        </p>
+      </div>
+      <div class="glass-card">
+        <span class="card-icon">📋</span>
+        <h4>Objectives</h4>
+        <ul>
+          <li>Digitize transport route assignments & fee billing</li>
+          <li>Automate payment tracking, dues detection & reminders</li>
+          <li>Track transport expenses for profitability analysis</li>
+          <li>Provide AI-powered insights & defaulter prediction</li>
+          <li>Manage full student lifecycle: enquiry → exit</li>
+          <li>Enable automated parent messaging (WhatsApp/SMS)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 03 — LITERATURE SURVEY (Part 1) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="2">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Literature Survey</div>
+    <h2 class="anim">What the Research Says</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      Key findings from journals, industry reports, and credible sources.
+    </p>
+
+    <div class="cards-grid cols-3 anim">
+      <div class="glass-card">
+        <span class="card-icon">📉</span>
+        <h4>Revenue Leakage in Manual Systems</h4>
+        <p>
+          Schools using manual transport fee tracking report
+          <span class="inline-rose">10–15% revenue leakage</span> from missed collections,
+          unrecorded route changes, and poor reconciliation.
+        </p>
+        <p class="source">— Schoolites.com, Industry Report (2024)</p>
+      </div>
+      <div class="glass-card">
+        <span class="card-icon">⚡</span>
+        <h4>Digital Payments Cut Processing Time</h4>
+        <p>
+          Systems linking transport attendance to automated billing
+          <span class="inline-green">significantly reduce processing time</span>
+          and minimize manual errors in fee calculation.
+        </p>
+        <p class="source">— Nsamwa et al., SCIRP (2025)</p>
+      </div>
+      <div class="glass-card">
+        <span class="card-icon">🤖</span>
+        <h4>AI in School Transport</h4>
+        <p>
+          AI-driven route optimization reduces fuel costs by
+          <span class="inline-accent">15–20%</span>. Predictive analytics enables
+          payment pattern detection and dynamic operational adjustments.
+        </p>
+        <p class="source">— eLearning Industry (2025)</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 04 — LITERATURE SURVEY (Part 2) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="3">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Literature Survey (Cont.)</div>
+    <h2 class="anim">Landscape & Challenges</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      The Indian preschool context and the case for integrated systems.
+    </p>
+
+    <div class="cards-grid cols-3 anim">
+      <div class="glass-card">
+        <span class="card-icon">💬</span>
+        <h4>Parent Communication Gap</h4>
+        <p>
+          Parents receiving <span class="inline-green">real-time updates</span> on bus status
+          and fee reminders show significantly higher satisfaction and
+          <span class="inline-green">on-time payment rates</span>. Informal WhatsApp groups
+          are being replaced by centralized platforms.
+        </p>
+        <p class="source">— Pathshala ERP, EduSys, EdTech Review (2024–25)</p>
+      </div>
+      <div class="glass-card">
+        <span class="card-icon">🇮🇳</span>
+        <h4>Indian Digitization Challenges</h4>
+        <p>
+          Only <span class="inline-amber">30–40% of Indian preschools</span> have fully digitized
+          fee management. State regulations (e.g., Maharashtra capping bus fares),
+          legacy inertia, and "partial adoption" remain key barriers.
+        </p>
+        <p class="source">— Indian Express, Axoneura.in (2024–25)</p>
+      </div>
+      <div class="glass-card">
+        <span class="card-icon">🔗</span>
+        <h4>Integrated ERP as Strategic Necessity</h4>
+        <p>
+          Standalone tools create <span class="inline-rose">operational silos</span>.
+          Schools with integrated systems (tuition + transport + communication in one
+          ledger) report better financial forecasting and reduced admin burden.
+        </p>
+        <p class="source">— NASSCOM / EDUCAUSE / Frontiers in Education (2023–25)</p>
+      </div>
+    </div>
+
+    <div class="glass-card anim" style="margin-top: 18px; border-left: 3px solid var(--accent);">
+      <p style="font-size: 14px; color: var(--text-secondary); font-style: italic;">
+        <span class="inline-accent">Key Synthesis:</span>
+        The research consistently shows that manual transport fee management causes measurable revenue loss,
+        and that integrated, AI-enhanced systems with strong parent communication are the proven path forward —
+        yet <span class="inline-amber">no single existing tool</span> addresses all these needs for Indian preschools.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 05 — EXISTING SYSTEMS (Part 1) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="4">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Existing System Analysis</div>
+    <h2 class="anim">What Already Exists</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      Three tools studied — each strong in one area, but none covers the full picture.
+    </p>
+
+    <div class="two-col anim">
+      <div class="glass-card" style="border-top: 3px solid var(--cyan);">
+        <span class="card-icon">🛰️</span>
+        <h4>Edsys TrackSchoolBus</h4>
+        <p style="margin-bottom: 8px;">
+          End-to-end <span class="inline-accent">transport tracking</span> with real-time GPS,
+          RFID-based attendance, route optimization, and parent alerts. Used by K-12 schools in India & Middle East.
+        </p>
+        <div style="margin-top: 8px;">
+          <span class="limitation-tag red">No Fee Billing</span>
+          <span class="limitation-tag red">No Enquiry Mgmt</span>
+          <span class="limitation-tag amber">Hardware Dependent</span>
+          <span class="limitation-tag amber">K-12 Only</span>
+          <span class="limitation-tag red">No AI Insights</span>
+        </div>
+      </div>
+      <div class="glass-card" style="border-top: 3px solid var(--green);">
+        <span class="card-icon">🌟</span>
+        <h4>Brightwheel</h4>
+        <p style="margin-bottom: 8px;">
+          All-in-one <span class="inline-green">preschool management</span> — billing, enrollment,
+          daily activity reports, parent messaging, attendance. Top-rated for US childcare centres.
+        </p>
+        <div style="margin-top: 8px;">
+          <span class="limitation-tag red">No Transport Module</span>
+          <span class="limitation-tag red">US-Centric</span>
+          <span class="limitation-tag red">No UPI / INR</span>
+          <span class="limitation-tag amber">No Exit Workflow</span>
+          <span class="limitation-tag red">No Expense Tracking</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 06 — EXISTING SYSTEMS (Part 2) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="5">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Existing System Analysis (Cont.)</div>
+    <h2 class="anim">The Payment-Only Gap</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      Payment platforms exist, but they don't address transport or Indian preschool needs.
+    </p>
+
+    <div class="glass-card anim" style="border-top: 3px solid var(--amber); max-width: 600px;">
+      <span class="card-icon">💳</span>
+      <h4>MySchoolBucks</h4>
+      <p style="margin-bottom: 8px;">
+        Online <span class="inline-amber">school payment platform</span> for cafeteria payments,
+        fee collection, and activity registrations. Used by US K-12 districts.
+        Per-transaction fee of <span class="inline-rose">$3.25–$3.50</span>.
+      </p>
+      <div style="margin-top: 8px;">
+        <span class="limitation-tag red">US-Only</span>
+        <span class="limitation-tag red">Meal-Focused</span>
+        <span class="limitation-tag red">No Transport Features</span>
+        <span class="limitation-tag red">No Communication</span>
+        <span class="limitation-tag amber">High Transaction Fees</span>
+        <span class="limitation-tag red">No Indian Payments</span>
+      </div>
+    </div>
+
+    <div class="glass-card anim" style="margin-top: 20px; border-left: 3px solid var(--rose);">
+      <h4 style="color: var(--rose); margin-bottom: 8px;">🔍 The Core Gap</h4>
+      <p style="font-size: 14px; line-height: 1.7;">
+        <strong>Edsys</strong> tracks buses but doesn't bill.
+        <strong>Brightwheel</strong> manages preschools but ignores transport.
+        <strong>MySchoolBucks</strong> collects payments but has no Indian presence.<br><br>
+        <span class="inline-accent">No existing tool combines:</span> transport route management +
+        transport-specific fee billing + Indian localization + AI insights +
+        full student lifecycle management — in a single platform.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 07 — COMPARISON TABLE -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="6">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Comparison</div>
+    <h2 class="anim">Feature-by-Feature Analysis</h2>
+    <p class="subtitle anim" style="margin-bottom: 10px;">
+      The gaps in existing systems directly justify the proposed solution.
+    </p>
+
+    <table class="comparison-table anim">
+      <thead>
+        <tr>
+          <th style="width: 26%;">Criteria</th>
+          <th style="width: 18%;">Edsys TrackSchoolBus</th>
+          <th style="width: 18%;">Brightwheel</th>
+          <th style="width: 18%;">MySchoolBucks</th>
+          <th style="width: 20%;">Our System ✦</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Transport Route Management</td>
+          <td><span class="check">✔</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>Transport Fee Billing</td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>Payment Tracking & Dues</td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="partial">◐ Partial</span></td>
+          <td><span class="partial">◐ Partial</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>Indian Payment Support (UPI)</td>
+          <td><span class="partial">◐ Partial</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>AI-Powered Insights</td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Built-in</span></td>
+        </tr>
+        <tr>
+          <td>Expense & Revenue Tracking</td>
+          <td><span class="partial">◐ Fleet only</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>Student Lifecycle (Enquiry→Exit)</td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Full</span></td>
+        </tr>
+        <tr>
+          <td>Parent Communication</td>
+          <td><span class="partial">◐ Alerts</span></td>
+          <td><span class="check">✔</span></td>
+          <td><span class="cross">✘</span></td>
+          <td><span class="check">✔ Multi-channel</span></td>
+        </tr>
+        <tr>
+          <td>Preschool-Specific Design</td>
+          <td><span class="cross">✘ K-12</span></td>
+          <td><span class="check">✔</span></td>
+          <td><span class="cross">✘ K-12</span></td>
+          <td><span class="check">✔ Custom</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 08 — PROPOSED SYSTEM (Overview) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="7">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Proposed System</div>
+    <h2 class="anim">What We're Building</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      A unified, web-based Transport Fee & Route Billing System for FirstCry Intellitots — purpose-built for Indian preschool operations.
+    </p>
+
+    <div class="feature-row anim">
+      <div class="feature-chip">
+        <span class="fc-icon">🚌</span>
+        <div class="fc-text">
+          <h5>Route & Vehicle Management</h5>
+          <span>Assign students to routes, manage vehicles, drivers & pickup/drop points</span>
+        </div>
+      </div>
+      <div class="feature-chip">
+        <span class="fc-icon">💰</span>
+        <div class="fc-text">
+          <h5>Automated Fee Billing</h5>
+          <span>Route-based fee calculation, payment recording with UPI/Cash/Online</span>
+        </div>
+      </div>
+    </div>
+    <div class="feature-row anim">
+      <div class="feature-chip">
+        <span class="fc-icon">⚠️</span>
+        <div class="fc-text">
+          <h5>Dues Tracker & Alerts</h5>
+          <span>Auto-detect overdue payments, send WhatsApp/SMS reminders</span>
+        </div>
+      </div>
+      <div class="feature-chip">
+        <span class="fc-icon">📋</span>
+        <div class="fc-text">
+          <h5>Enquiry → Admission Pipeline</h5>
+          <span>Parent enquiry form, counsellor follow-up, full audit trail</span>
+        </div>
+      </div>
+    </div>
+    <div class="feature-row anim">
+      <div class="feature-chip">
+        <span class="fc-icon">💼</span>
+        <div class="fc-text">
+          <h5>Finance Dashboard</h5>
+          <span>Revenue vs expenses, profit/loss by route, monthly trends</span>
+        </div>
+      </div>
+      <div class="feature-chip">
+        <span class="fc-icon">🤖</span>
+        <div class="fc-text">
+          <h5>AI Insights & Analytics</h5>
+          <span>Defaulter prediction, payment patterns, occupancy forecasting</span>
+        </div>
+      </div>
+    </div>
+    <div class="feature-row anim">
+      <div class="feature-chip">
+        <span class="fc-icon">🚪</span>
+        <div class="fc-text">
+          <h5>Exit & Transfer Records</h5>
+          <span>Manage student exits, outstanding dues clearance, refund processing</span>
+        </div>
+      </div>
+      <div class="feature-chip">
+        <span class="fc-icon">💬</span>
+        <div class="fc-text">
+          <h5>Multi-Channel Messaging</h5>
+          <span>Automated reminders & notifications via WhatsApp, SMS, Email</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 09 — PROPOSED SYSTEM (Architecture) -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="8">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Proposed System (Cont.)</div>
+    <h2 class="anim">System Architecture & User Roles</h2>
+    <p class="subtitle anim" style="margin-bottom: 20px;">
+      Clean separation of concerns with role-based access and 11 API route groups.
+    </p>
+
+    <div class="two-col anim">
+      <div>
+        <div class="glass-card" style="margin-bottom: 14px;">
+          <h4 style="color: var(--accent-bright); margin-bottom: 10px;">🏗️ Architecture</h4>
+          <ul style="list-style: none; padding: 0;">
+            <li style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--text-secondary);">
+              <span class="inline-accent">Frontend:</span> React SPA with 14 pages, Sidebar nav, dashboard charts
+            </li>
+            <li style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--text-secondary);">
+              <span class="inline-green">Backend:</span> Express REST API with 11 route modules
+            </li>
+            <li style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--text-secondary);">
+              <span class="inline-accent">Database:</span> MySQL with 20+ relational tables
+            </li>
+            <li style="padding: 6px 0; font-size: 13px; color: var(--text-secondary);">
+              <span class="inline-amber">Communication:</span> REST JSON APIs with CORS
+            </li>
+          </ul>
+        </div>
+        <div class="glass-card">
+          <h4 style="color: var(--green); margin-bottom: 10px;">🔗 API Modules (11)</h4>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <span class="limitation-tag" style="background: rgba(99,102,241,0.1); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.2);">Students</span>
+            <span class="limitation-tag" style="background: rgba(99,102,241,0.1); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.2);">Transport</span>
+            <span class="limitation-tag" style="background: rgba(99,102,241,0.1); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.2);">Payments</span>
+            <span class="limitation-tag" style="background: rgba(99,102,241,0.1); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.2);">Dues</span>
+            <span class="limitation-tag" style="background: rgba(99,102,241,0.1); color: var(--accent-bright); border: 1px solid rgba(99,102,241,0.2);">Dashboard</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Enquiries</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Follow-ups</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Exits</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Finance</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Insights</span>
+            <span class="limitation-tag" style="background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2);">Messages</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="glass-card" style="margin-bottom: 14px;">
+          <h4 style="color: var(--amber); margin-bottom: 10px;">👥 Target Users</h4>
+          <ul style="list-style: none; padding: 0;">
+            <li style="padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px;">
+              <span style="font-weight: 600; color: var(--text-primary);">Centre Admin</span>
+              <span style="color: var(--text-muted); display: block; font-size: 12px;">Full access — routes, billing, reports, exits</span>
+            </li>
+            <li style="padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px;">
+              <span style="font-weight: 600; color: var(--text-primary);">Centre Head</span>
+              <span style="color: var(--text-muted); display: block; font-size: 12px;">Finance overview, expense approvals, insights</span>
+            </li>
+            <li style="padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px;">
+              <span style="font-weight: 600; color: var(--text-primary);">Counsellor</span>
+              <span style="color: var(--text-muted); display: block; font-size: 12px;">Enquiry follow-ups, parent communication</span>
+            </li>
+            <li style="padding: 8px 0; font-size: 13px;">
+              <span style="font-weight: 600; color: var(--text-primary);">Teacher</span>
+              <span style="color: var(--text-muted); display: block; font-size: 12px;">Student records, attendance, daily routines</span>
+            </li>
+          </ul>
+        </div>
+        <div class="glass-card">
+          <h4 style="color: var(--cyan); margin-bottom: 10px;">📊 Database Scale</h4>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div style="text-align: center;">
+              <div class="stat-highlight">20+</div>
+              <div style="font-size: 11px; color: var(--text-muted);">Tables</div>
+            </div>
+            <div style="text-align: center;">
+              <div class="stat-highlight">14</div>
+              <div style="font-size: 11px; color: var(--text-muted);">UI Pages</div>
+            </div>
+            <div style="text-align: center;">
+              <div class="stat-highlight">11</div>
+              <div style="font-size: 11px; color: var(--text-muted);">API Routes</div>
+            </div>
+            <div style="text-align: center;">
+              <div class="stat-highlight">6</div>
+              <div style="font-size: 11px; color: var(--text-muted);">Workflow Steps</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 10 — BENEFITS -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="9">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Benefits</div>
+    <h2 class="anim">Concrete Improvements Over Existing Solutions</h2>
+    <p class="subtitle anim" style="margin-bottom: 16px;">
+      Every benefit traces back to a specific limitation discovered during research.
+    </p>
+
+    <div class="benefit-grid anim">
+      <div class="benefit-item">
+        <div class="benefit-num">01</div>
+        <div>
+          <h5>Eliminates Revenue Leakage</h5>
+          <p>Automated billing & dues detection closes the <span class="inline-rose">10–15% revenue gap</span> found in manual systems.</p>
+        </div>
+      </div>
+      <div class="benefit-item">
+        <div class="benefit-num">02</div>
+        <div>
+          <h5>Reduces Manual Steps: 5 → 1</h5>
+          <p>Route assignment + fee calculation + receipt + ledger entry + reminder — all automated in a single action.</p>
+        </div>
+      </div>
+      <div class="benefit-item">
+        <div class="benefit-num">03</div>
+        <div>
+          <h5>Zero Operational Silos</h5>
+          <p>Unlike Edsys + Brightwheel combo, our single platform covers transport, billing, communication, and analytics.</p>
+        </div>
+      </div>
+      <div class="benefit-item">
+        <div class="benefit-num">04</div>
+        <div>
+          <h5>Built for India</h5>
+          <p>Supports UPI, Cash, Cheque; INR billing; Indian regulations — unlike US-centric tools (Brightwheel, MySchoolBucks).</p>
+        </div>
+      </div>
+      <div class="benefit-item">
+        <div class="benefit-num">05</div>
+        <div>
+          <h5>AI-Powered Defaulter Detection</h5>
+          <p>Predictive insights identify at-risk payments before they become overdue — a feature <span class="inline-accent">no competitor offers</span>.</p>
+        </div>
+      </div>
+      <div class="benefit-item">
+        <div class="benefit-num">06</div>
+        <div>
+          <h5>Full Student Lifecycle</h5>
+          <p>From parent enquiry → counsellor follow-up → admission → billing → exit/transfer — all tracked with audit trail.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 11 — TECHNOLOGY STACK -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="10">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Technology Stack</div>
+    <h2 class="anim">Tools & Frameworks Chosen</h2>
+    <p class="subtitle anim" style="margin-bottom: 16px;">
+      Each choice has a specific rationale — reviewers, feel free to ask "why this over X?"
+    </p>
+
+    <div class="two-col anim">
+      <div class="glass-card">
+        <h4 style="margin-bottom: 12px; color: var(--accent-bright);">⚛️ Frontend</h4>
+        <div class="tech-item">
+          <span class="tech-badge frontend">React 19</span>
+          <div>
+            <div class="tech-name">React</div>
+            <div class="tech-reason">Component-driven SPA; largest ecosystem; reusable UI modules across 14 pages</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge frontend">Vite 8</span>
+          <div>
+            <div class="tech-name">Vite</div>
+            <div class="tech-reason">Instant HMR, fast builds; replaces CRA which is deprecated</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge frontend">Recharts</span>
+          <div>
+            <div class="tech-name">Recharts</div>
+            <div class="tech-reason">Declarative charting for React; used in finance dashboards & reports</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge frontend">Framer Motion</span>
+          <div>
+            <div class="tech-name">Framer Motion</div>
+            <div class="tech-reason">Smooth animations & transitions for premium UI feel</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge frontend">Lucide</span>
+          <div>
+            <div class="tech-name">Lucide React</div>
+            <div class="tech-reason">Lightweight icon library; consistent design language</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <h4 style="margin-bottom: 12px; color: var(--green);">🖥️ Backend & Database</h4>
+        <div class="tech-item">
+          <span class="tech-badge backend">Node.js</span>
+          <div>
+            <div class="tech-name">Node.js + Express 5</div>
+            <div class="tech-reason">Non-blocking I/O; same language (JS) across stack; lightweight REST API</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge database">MySQL</span>
+          <div>
+            <div class="tech-name">MySQL (mysql2)</div>
+            <div class="tech-reason">Relational integrity for financial data; ACID compliance; industry standard</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge tools">REST API</span>
+          <div>
+            <div class="tech-name">RESTful Architecture</div>
+            <div class="tech-reason">11 modular route groups; clean separation of concerns; easy to extend</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge tools">dotenv</span>
+          <div>
+            <div class="tech-name">dotenv + CORS</div>
+            <div class="tech-reason">Secure config management; cross-origin support for SPA↔API</div>
+          </div>
+        </div>
+        <div class="tech-item">
+          <span class="tech-badge tools">Vanilla CSS</span>
+          <div>
+            <div class="tech-name">Custom CSS Design System</div>
+            <div class="tech-reason">Dark glassmorphic theme; no framework bloat; full styling control</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 12 — UPDATED TIMELINE -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide" data-slide="11">
+  <div class="slide-scroll">
+    <div class="slide-label anim">Updated Project Plan</div>
+    <h2 class="anim">Revised Timeline — Weeks 1–4</h2>
+    <p class="subtitle anim" style="margin-bottom: 16px;">
+      Reflecting Week 2 progress and the path forward.
+    </p>
+
+    <div class="two-col anim">
+      <div>
+        <div class="timeline">
+          <div class="tl-row">
+            <div class="tl-marker">
+              <div class="tl-dot done"></div>
+              <div class="tl-line"></div>
+            </div>
+            <div class="tl-content">
+              <h5>Week 1 — Foundation & Setup</h5>
+              <p>Problem definition, objectives, database schema design (20+ tables), project structure, initial frontend scaffold, basic routing.</p>
+              <span class="tl-status done">✔ Completed</span>
+            </div>
+          </div>
+          <div class="tl-row">
+            <div class="tl-marker">
+              <div class="tl-dot done"></div>
+              <div class="tl-line"></div>
+            </div>
+            <div class="tl-content">
+              <h5>Week 2 — Research & Core Build</h5>
+              <p>Literature survey, existing system analysis, comparison study. Built 14 UI pages, 11 API routes, full CRUD for transport, payments, dues, enquiries, exits, expenses.</p>
+              <span class="tl-status done">✔ Completed</span>
+            </div>
+          </div>
+          <div class="tl-row">
+            <div class="tl-marker">
+              <div class="tl-dot current"></div>
+              <div class="tl-line"></div>
+            </div>
+            <div class="tl-content">
+              <h5>Week 3 — Integration & Polish</h5>
+              <p>AI insights engine, finance dashboard analytics, automated messaging system, receipt generation, role-based access control, data validation.</p>
+              <span class="tl-status progress">▶ In Progress</span>
+            </div>
+          </div>
+          <div class="tl-row">
+            <div class="tl-marker">
+              <div class="tl-dot future"></div>
+            </div>
+            <div class="tl-content">
+              <h5>Week 4 — Testing & Deployment</h5>
+              <p>End-to-end testing, bug fixes, performance optimization, deployment, documentation, final presentation & demo.</p>
+              <span class="tl-status planned">◻ Planned</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="glass-card" style="margin-bottom: 14px; border-left: 3px solid var(--green);">
+          <h4 style="color: var(--green); margin-bottom: 10px;">✅ Completed (Weeks 1–2)</h4>
+          <ul style="list-style: none; padding: 0; font-size: 13px; color: var(--text-secondary);">
+            <li style="padding: 4px 0;">✔ Database schema — 20+ tables with relations</li>
+            <li style="padding: 4px 0;">✔ Backend API — 11 route modules</li>
+            <li style="padding: 4px 0;">✔ Frontend — 14 interactive pages</li>
+            <li style="padding: 4px 0;">✔ Dashboard with live stats & charts</li>
+            <li style="padding: 4px 0;">✔ Enquiry → Follow-up workflow</li>
+            <li style="padding: 4px 0;">✔ Transport CRUD + Payments + Dues</li>
+            <li style="padding: 4px 0;">✔ Exit/Transfer management</li>
+            <li style="padding: 4px 0;">✔ Expense entry & finance overview</li>
+          </ul>
+        </div>
+        <div class="glass-card" style="border-left: 3px solid var(--accent);">
+          <h4 style="color: var(--accent-bright); margin-bottom: 10px;">🎯 Next Up (Weeks 3–4)</h4>
+          <ul style="list-style: none; padding: 0; font-size: 13px; color: var(--text-secondary);">
+            <li style="padding: 4px 0;">◻ Advanced AI insights & predictions</li>
+            <li style="padding: 4px 0;">◻ WhatsApp/SMS message integration</li>
+            <li style="padding: 4px 0;">◻ PDF receipt & report export</li>
+            <li style="padding: 4px 0;">◻ Role-based access control</li>
+            <li style="padding: 4px 0;">◻ End-to-end testing & deployment</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SLIDE 13 — Q&A -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section class="slide qa-slide" data-slide="12">
+  <div class="qa-icon anim">💬</div>
+  <h1 class="anim">Questions & Discussion</h1>
+  <p class="subtitle anim" style="text-align: center; margin-bottom: 36px;">
+    Thank you for your time. I'm happy to answer any questions.
+  </p>
+  <div class="anim" style="display: flex; gap: 40px; justify-content: center;">
+    <div class="title-meta-item">
+      <div class="meta-label">Presented By</div>
+      <div class="meta-value">Manvith Kumar & Nithin</div>
+    </div>
+    <div class="title-meta-item">
+      <div class="meta-label">Project</div>
+      <div class="meta-value">Transport Fee & Route Billing System</div>
+    </div>
+    <div class="title-meta-item">
+      <div class="meta-label">Organization</div>
+      <div class="meta-value">FirstCry Intellitots</div>
+    </div>
+  </div>
+</section>
+
+<script>
+// ── Slide Engine ──
+const slides = document.querySelectorAll('.slide');
+const totalSlides = slides.length;
+let current = 0;
+
+// Build nav dots
+const dotsContainer = document.getElementById('nav-dots');
+slides.forEach((_, i) => {
+  const dot = document.createElement('button');
+  dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+  dot.title = `Slide ${i + 1}`;
+  dot.addEventListener('click', () => goToSlide(i));
+  dotsContainer.appendChild(dot);
+});
+
+function updateUI() {
+  const progress = ((current + 1) / totalSlides) * 100;
+  document.getElementById('progress-bar').style.width = progress + '%';
+  document.getElementById('slide-counter').textContent =
+    String(current + 1).padStart(2, '0') + ' / ' + String(totalSlides).padStart(2, '0');
+
+  document.querySelectorAll('.nav-dot').forEach((d, i) => {
+    d.classList.toggle('active', i === current);
+  });
+}
+
+let isAnimating = false;
+
+function goToSlide(index) {
+  if (index === current || index < 0 || index >= totalSlides || isAnimating) return;
+  isAnimating = true;
+  const direction = index > current ? 1 : -1;
+  const outgoing = slides[current];
+  const incoming = slides[index];
+
+  // 1) Slide the outgoing slide out
+  outgoing.style.transition = 'opacity 0.45s ease, transform 0.45s ease';
+  outgoing.style.opacity = '0';
+  outgoing.style.transform = direction > 0 ? 'translateX(-60px)' : 'translateX(60px)';
+
+  // 2) Prepare incoming slide at its start position (no transition yet)
+  incoming.style.transition = 'none';
+  incoming.style.opacity = '0';
+  incoming.style.transform = direction > 0 ? 'translateX(60px)' : 'translateX(-60px)';
+  incoming.classList.add('active');
+
+  // 3) After outgoing finishes, animate incoming in
+  setTimeout(() => {
+    outgoing.classList.remove('active');
+    outgoing.style.transition = '';
+    outgoing.style.opacity = '';
+    outgoing.style.transform = '';
+
+    // Force browser to paint the start position before transitioning
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        incoming.style.transition = 'opacity 0.45s ease, transform 0.45s ease';
+        incoming.style.opacity = '1';
+        incoming.style.transform = 'translateX(0)';
+        current = index;
+        updateUI();
+
+        setTimeout(() => {
+          incoming.style.transition = '';
+          incoming.style.opacity = '';
+          incoming.style.transform = '';
+          isAnimating = false;
+        }, 460);
+      });
+    });
+  }, 350);
+}
+
+function nextSlide() { goToSlide(current + 1); }
+function prevSlide() { goToSlide(current - 1); }
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
+  if (e.key === 'Home') { e.preventDefault(); goToSlide(0); }
+  if (e.key === 'End') { e.preventDefault(); goToSlide(totalSlides - 1); }
+  if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen();
+    }
+  }
+});
+
+// Touch swipe
+let touchStartX = 0;
+document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', (e) => {
+  const diff = touchStartX - e.changedTouches[0].clientX;
+  if (Math.abs(diff) > 50) {
+    diff > 0 ? nextSlide() : prevSlide();
+  }
+});
+
+updateUI();
+</script>
+</body>
+</html>
