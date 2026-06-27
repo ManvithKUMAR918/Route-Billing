@@ -1,5 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+// Debug: log the API base in dev
+if (import.meta.env.DEV) {
+  console.log('[api] API_BASE =', API_BASE);
+}
+
 const request = async (url, options = {}) => {
   try {
     const res = await fetch(`${API_BASE}${url}`, {
@@ -7,10 +12,10 @@ const request = async (url, options = {}) => {
       ...options,
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Request failed');
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
     return data;
   } catch (err) {
-    console.error('API Error:', err);
+    console.error(`[api] ${options.method || 'GET'} ${url} →`, err.message);
     throw err;
   }
 };
