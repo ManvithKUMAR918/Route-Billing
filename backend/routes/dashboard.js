@@ -5,10 +5,10 @@ const db = require('../db');
 router.get('/stats', async (req, res) => {
   try {
     // Total students
-    const [[{ totalStudents }]] = await db.query('SELECT COUNT(*) AS totalStudents FROM students WHERE status = "active"');
+    const [[{ totalStudents }]] = await db.query("SELECT COUNT(*) AS totalStudents FROM students WHERE status = 'active'");
 
     // Active transport assignments
-    const [[{ activeTransport }]] = await db.query('SELECT COUNT(*) AS activeTransport FROM transport_assignments WHERE status = "active"');
+    const [[{ activeTransport }]] = await db.query("SELECT COUNT(*) AS activeTransport FROM transport_assignments WHERE status = 'active'");
 
     // Total collected this month
     const [[{ totalCollected }]] = await db.query(
@@ -27,7 +27,7 @@ router.get('/stats', async (req, res) => {
 
     // Route summary
     const [routeSummary] = await db.query(
-      'SELECT route_name, COUNT(*) AS count, SUM(monthly_fee) AS total_fee FROM transport_assignments WHERE status = "active" GROUP BY route_name'
+      "SELECT route_name, COUNT(*) AS count, SUM(monthly_fee) AS total_fee FROM transport_assignments WHERE status = 'active' GROUP BY route_name"
     );
 
     // Monthly collection (last 6 months) — group by month_paid

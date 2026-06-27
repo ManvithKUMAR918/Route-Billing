@@ -1,13 +1,13 @@
 {
-  "experimentalServices": {
-    "frontend": {
-      "root": "frontend",
-      "routePrefix": "/",
-      "framework": "vite"
+  "version": 2,
+  "cleanUrls": true,
+  "routes": [
+    {
+      "handle": "filesystem"
     },
-    "backend": {
-      "root": "backend",
-      "routePrefix": "/_/backend"
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
-  }
+  ]
 }
