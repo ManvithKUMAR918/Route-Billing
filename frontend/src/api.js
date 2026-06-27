@@ -91,4 +91,13 @@ export const api = {
   },
   sendMessage: (data) => request('/messages', { method: 'POST', body: JSON.stringify(data) }),
   autoGenerateReminders: () => request('/messages/auto-generate', { method: 'POST', body: JSON.stringify({ type: 'reminder' }) }),
+
+  // ── WhatsApp Alerts ──
+  getAlertStudents: () => request('/transport/alert-students'),
+  markPaid: (data) => request('/transport/mark-paid', { method: 'POST', body: JSON.stringify(data) }),
+  sendManualAlert: (data) => request('/transport/send-manual-alert', { method: 'POST', body: JSON.stringify(data) }),
+  getAlertLogs: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return request(`/transport/alert-logs${query ? '?' + query : ''}`);
+  },
 };

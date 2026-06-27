@@ -9,14 +9,86 @@ export default function Finance() {
   const [activeTab, setActiveTab] = useState('overview');
   const { showToast } = useToast();
 
+  // WhatsApp Alerts State
+  const [alertStudents, setAlertStudents] = useState([]);
+  const [alertLogs, setAlertLogs] = useState([]);
+  const [showPaidModal, setShowPaidModal] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [paidAmount, setPaidAmount] = useState('');
+  const [paidDate, setPaidDate] = useState(new Date().toISOString().split('T')[0]);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const loadAlertData = () => {
+    api.getAlertStudents()
+      .then(res => setAlertStudents(res.data || []))
+      .catch(err => showToast(err.message, 'error'));
+      
+    api.getAlertLogs()
+      .then(res => setAlertLogs(res.data || []))
+      .catch(err => showToast(err.message, 'error'));
+  };
+
   useEffect(() => {
     api.getFinanceSummary().then(res => setFinance(res.data)).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'alerts') {
+      loadAlertData();
+    }
+  }, [activeTab]);
+
+  const handleSendReminder = async (studentId, type) => {
+    setActionLoading(true);
+    try {
+      await api.sendManualAlert({ student_id: studentId, alert_type: type });
+      showToast(`Reminder alert sent successfully!`, 'success');
+      loadAlertData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMarkPaid = async (e) => {
+    e.preventDefault();
+    if (!paidAmount || !paidDate) {
+      showToast('Please specify both amount and date.', 'error');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await api.markPaid({
+        student_id: selectedStudent.student_id,
+        paid_amount: parseFloat(paidAmount),
+        paid_date: paidDate
+      });
+      showToast('Payment recorded successfully. WhatsApp confirmation sent!', 'success');
+      setShowPaidModal(false);
+      loadAlertData();
+      // Refresh summary
+      api.getFinanceSummary().then(res => setFinance(res.data));
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
   if (!finance) return <div className="empty-state"><p>Could not load finance data</p></div>;
 
   const EXPENSE_COLORS = { Fuel: '#6366f1', Maintenance: '#f59e0b', 'Driver Salary': '#10b981', Other: '#06b6d4' };
+
+  // Calculate alerts metrics
+  const pendingCount = alertStudents.filter(s => s.payment_status === 'pending').length;
+  const overdueCount = alertStudents.filter(s => s.payment_status === 'overdue').length;
+  const alertsSentToday = alertLogs.filter(log => {
+    const logDate = new Date(log.sent_at).toDateString();
+    const today = new Date().toDateString();
+    return logDate === today;
+  }).length;
 
   return (
     <div className="page-container">
@@ -62,10 +134,10 @@ export default function Finance() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: 'var(--bg-card)', padding: 4, borderRadius: 10, border: '1px solid var(--border)', width: 'fit-content' }}>
-        {['overview', 'routes', 'expenses', 'payment_modes'].map(tab => (
+        {['overview', 'routes', 'expenses', 'payment_modes', 'alerts'].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             style={{ padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: activeTab === tab ? 'var(--primary)' : 'transparent', color: activeTab === tab ? 'white' : 'var(--text-muted)', transition: 'all 0.2s' }}>
-            {{ overview: '📊 Overview', routes: '🗺️ Routes', expenses: '📤 Expenses', payment_modes: '💳 Payment Modes' }[tab]}
+            {{ overview: '📊 Overview', routes: '🗺️ Routes', expenses: '📤 Expenses', payment_modes: '💳 Payment Modes', alerts: '💬 WhatsApp Alerts' }[tab]}
           </button>
         ))}
       </div>
@@ -189,6 +261,239 @@ export default function Finance() {
             </div>
           </div>
         </motion.div>
+      )}
+
+      {/* WhatsApp Alerts Tab */}
+      {activeTab === 'alerts' && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          {/* Metrics Grid */}
+          <div className="stats-grid" style={{ marginBottom: 24 }}>
+            {[
+              { label: 'Total Pending', value: pendingCount, icon: '⏳', color: 'indigo', sub: 'Awaiting fee payment' },
+              { label: 'Total Overdue', value: overdueCount, icon: '🚨', color: 'amber', sub: 'Past payment due dates' },
+              { label: 'Alerts Sent Today', value: alertsSentToday, icon: '💬', color: 'green', sub: 'Dispatched via Twilio Sandbox' },
+            ].map((s, i) => (
+              <motion.div key={i} className={`stat-card ${s.color}`}
+                initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
+                <div className="stat-icon">{s.icon}</div>
+                <div className="stat-value">{s.value}</div>
+                <div className="stat-label">{s.label}</div>
+                <div className="stat-sub">{s.sub}</div>
+              </motion.div>
+            ))}
+          </div>
+
+          {/* Alert Students List Table */}
+          <div className="card" style={{ marginBottom: 24 }}>
+            <div className="card-header"><h3 className="card-title">💬 WhatsApp Billing & Alerts Management</h3></div>
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student Name</th>
+                    <th>Route</th>
+                    <th>Monthly Fee</th>
+                    <th>Due Date</th>
+                    <th>Status</th>
+                    <th>Last Alert Sent</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alertStudents.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)' }}>
+                        No transport fee alert records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    alertStudents.map((fee) => (
+                      <tr key={fee.id}>
+                        <td className="td-name">
+                          <div>{fee.student_name}</div>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Parent: {fee.parent_name} (+{fee.parent_phone})</span>
+                        </td>
+                        <td style={{ color: 'var(--text-secondary)' }}>{fee.route_name}</td>
+                        <td className="td-amount">₹{fee.monthly_fee.toLocaleString()}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>
+                          {new Date(fee.due_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            fee.payment_status === 'paid' ? 'badge-success' : 
+                            fee.payment_status === 'overdue' ? 'badge-danger' : 'badge-warning'
+                          }`}>
+                            {fee.payment_status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                          {fee.last_alert_sent 
+                            ? new Date(fee.last_alert_sent).toLocaleString('en-IN')
+                            : 'Never'
+                          }
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {fee.payment_status !== 'paid' && (
+                              <>
+                                <button 
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() => {
+                                    setSelectedStudent(fee);
+                                    setPaidAmount(fee.monthly_fee);
+                                    setShowPaidModal(true);
+                                  }}
+                                  disabled={actionLoading}
+                                >
+                                  💸 Mark Paid
+                                </button>
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                  <button 
+                                    className="btn btn-sm btn-outline"
+                                    title="Send Upcoming Due Reminder"
+                                    onClick={() => handleSendReminder(fee.student_id, 'upcoming')}
+                                    disabled={actionLoading}
+                                  >
+                                    🔔 Upcoming
+                                  </button>
+                                  <button 
+                                    className="btn btn-sm btn-outline"
+                                    title="Send Due Today Alert"
+                                    onClick={() => handleSendReminder(fee.student_id, 'due_today')}
+                                    disabled={actionLoading}
+                                  >
+                                    📱 Due Today
+                                  </button>
+                                  {fee.payment_status === 'overdue' && (
+                                    <button 
+                                      className="btn btn-sm btn-outline"
+                                      style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }}
+                                      title="Send Overdue Warning Alert"
+                                      onClick={() => handleSendReminder(fee.student_id, 'overdue')}
+                                      disabled={actionLoading}
+                                    >
+                                      ⚠️ Overdue
+                                    </button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                            {fee.payment_status === 'paid' && (
+                              <button 
+                                className="btn btn-sm btn-outline"
+                                style={{ color: 'var(--success)' }}
+                                disabled={true}
+                              >
+                                ✅ Fully Paid
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Logs Panel */}
+          <div className="card">
+            <div className="card-header"><h3 className="card-title">📜 Recent Alert Logs (Last 20)</h3></div>
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student</th>
+                    <th>Parent Phone</th>
+                    <th>Message Type</th>
+                    <th>Message Body</th>
+                    <th>Status</th>
+                    <th>Sent At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alertLogs.slice(0, 20).length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)' }}>
+                        No WhatsApp logs dispatched yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    alertLogs.slice(0, 20).map((log) => (
+                      <tr key={log.id}>
+                        <td className="td-name">{log.student_name}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>+{log.parent_phone}</td>
+                        <td>
+                          <span className="badge" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+                            {log.message_type.replace('_', ' ').toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.message_body}>
+                          {log.message_body}
+                        </td>
+                        <td>
+                          <span className={`badge ${log.status === 'sent' ? 'badge-success' : 'badge-danger'}`}>
+                            {log.status}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                          {new Date(log.sent_at).toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Mark as Paid modal overlay */}
+      {showPaidModal && selectedStudent && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h2>💸 Record Transport Payment</h2>
+              <button className="btn btn-sm btn-outline" style={{ background: 'transparent', border: 'none', fontSize: 16, cursor: 'pointer' }} onClick={() => setShowPaidModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleMarkPaid}>
+              <div className="modal-body">
+                <p style={{ marginBottom: 20, color: 'var(--text-secondary)', fontSize: 13, lineHeight: '1.5' }}>
+                  Recording payment for <strong>{selectedStudent.student_name}</strong> (Parent: {selectedStudent.parent_name}).
+                  An automatic WhatsApp confirmation message will be sent immediately to <strong>+{selectedStudent.parent_phone}</strong>.
+                </p>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase' }}>Amount Paid (₹)</label>
+                  <input 
+                    type="number" 
+                    className="form-control"
+                    value={paidAmount}
+                    onChange={(e) => setPaidAmount(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase' }}>Payment Date</label>
+                  <input 
+                    type="date" 
+                    className="form-control"
+                    value={paidDate}
+                    onChange={(e) => setPaidDate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={() => setShowPaidModal(false)} disabled={actionLoading}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Recording...' : 'Confirm & Send WhatsApp'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

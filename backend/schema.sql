@@ -509,3 +509,33 @@ INSERT INTO enquiries (student_name, parent_name, phone, email, class, route_req
 INSERT INTO messages (recipient, phone, student_name, message_type, channel, content, status, sent_at, created_by) VALUES
 ('Rajesh Sharma', '9876543210', 'Aarav Sharma', 'reminder', 'whatsapp', 'Dear Rajesh Sir, This is a reminder that transport fee of ₹1500 for June 2026 is due. — FirstCry Intellitots', 'sent', '2026-06-05 09:00:00', 'System'),
 ('Vijay Nair', '9876543214', 'Karan Nair', 'overdue_alert', 'sms', 'URGENT: Transport fee of ₹1800 for Karan Nair (June 2026) is overdue. Please contact us. — FirstCry Intellitots', 'sent', '2026-06-08 10:30:00', 'Admin');
+
+-- =============================================================
+-- WHATSAPP AUTO-ALERTS SYSTEM
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS transport_fees (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  student_id INT,
+  parent_name VARCHAR(100),
+  parent_phone VARCHAR(15),
+  route_name VARCHAR(100),
+  pickup_point VARCHAR(100),
+  drop_point VARCHAR(100),
+  monthly_fee DECIMAL(10,2),
+  due_date DATE,
+  payment_status ENUM('pending', 'paid', 'overdue') DEFAULT 'pending',
+  last_alert_sent DATETIME,
+  created_at DATETIME DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_logs (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  student_id INT,
+  parent_phone VARCHAR(15),
+  message_type VARCHAR(50),
+  message_body TEXT,
+  status ENUM('sent', 'failed'),
+  sent_at DATETIME DEFAULT NOW()
+);
+
