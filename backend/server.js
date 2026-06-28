@@ -11,6 +11,10 @@ const allowedOrigins = [
   'http://localhost:3000',
   // Vercel preview & production — wildcard for your project
   /\.vercel\.app$/,
+  // Render frontend deployments
+  /\.onrender\.com$/,
+  // Netlify deployments (if you ever use it)
+  /\.netlify\.app$/,
 ];
 
 app.use(cors({
