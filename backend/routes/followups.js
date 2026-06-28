@@ -47,12 +47,30 @@ router.post('/', async (req, res) => {
         priority || 'medium',
       ]
     );
+
+    // ── STEP 2→3 CONNECTION ─────────────────────────────────
+    // If there's a matching pending enquiry for this student,
+    // auto-advance it from 'pending' → 'in_progress'
+    const [[matchingEnquiry]] = await db.query(
+      `SELECT id, status FROM fc_enquiries
+       WHERE student_name = ? AND status = 'pending'
+       ORDER BY created_at DESC LIMIT 1`,
+      [student_name.trim()]
+    );
+    if (matchingEnquiry) {
+      await db.query(
+        `UPDATE fc_enquiries SET status = 'in_progress', last_updated = NOW() WHERE id = ?`,
+        [matchingEnquiry.id]
+      );
+    }
+
     res.status(201).json({ success: true, message: 'Follow-up logged successfully', id: result.insertId });
   } catch (err) {
     console.error('POST /followups:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 
 // ── PUT /api/followups/:id ──────────────────────────────────
 router.put('/:id', async (req, res) => {

@@ -85,12 +85,39 @@ router.post('/', async (req, res) => {
       );
     }
 
+    // ── STEP 5 CONNECTION ──────────────────────────────────
+    // Auto-log a completed follow-up: "Fee collected — admission complete"
+    await db.query(
+      `INSERT INTO fc_followups
+       (student_name, counsellor, action_taken, action_type, next_action, priority, status)
+       VALUES (?, 'Admin', ?, 'admin', 'Workflow complete — student fully admitted', 'low', 'completed')`,
+      [
+        student_name.trim(),
+        `Fee collected via ${payment_mode?.toUpperCase() || 'CASH'} — ₹${parseFloat(amount_paid).toLocaleString()} for ${month_paid || 'current month'}. Receipt: ${receipt_number}.`,
+      ]
+    );
+
+    // Also mark the matching enquiry as resolved if still in_progress
+    const [[openEnquiry]] = await db.query(
+      `SELECT id FROM fc_enquiries
+       WHERE student_name = ? AND status IN ('pending','in_progress')
+       ORDER BY created_at DESC LIMIT 1`,
+      [student_name.trim()]
+    );
+    if (openEnquiry) {
+      await db.query(
+        "UPDATE fc_enquiries SET status = 'resolved', last_updated = NOW() WHERE id = ?",
+        [openEnquiry.id]
+      );
+    }
+
     res.status(201).json({
       success: true,
       message: 'Payment recorded successfully',
       receipt_number,
       id: result.insertId,
     });
+
   } catch (err) {
     console.error('POST /payments:', err.message);
     res.status(500).json({ success: false, message: err.message });
