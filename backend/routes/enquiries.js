@@ -112,7 +112,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// ── Helper: auto-create student on resolve ──────────────────
+// ── Helper: auto-create records on resolve ──────────────────
 async function autoCreateFromEnquiry(enquiry) {
   try {
     // Check duplicate in fc_transport
@@ -120,32 +120,47 @@ async function autoCreateFromEnquiry(enquiry) {
       'SELECT id FROM fc_transport WHERE student_name = ? AND route_name = ? LIMIT 1',
       [enquiry.student_name, enquiry.route_requested || '']
     );
-    if (existing.length > 0) return; // Already exists — skip
 
-    // 1. Create transport record
+    if (existing.length === 0) {
+      // 1. Create transport record
+      await db.query(
+        `INSERT INTO fc_transport (student_name, class, route_name, pickup_point, drop_point, monthly_fee, status)
+         VALUES (?, ?, ?, '', '', 0, 'active')`,
+        [enquiry.student_name, enquiry.class || '', enquiry.route_requested || '']
+      );
+
+      // 2. Create pending payment for current month
+      const now = new Date();
+      const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
+      await db.query(
+        `INSERT INTO fc_payments (student_name, class, amount_paid, payment_date, payment_mode, month_paid, remarks)
+         VALUES (?, ?, 0, ?, 'cash', ?, 'Auto-created on enquiry resolution')`,
+        [enquiry.student_name, enquiry.class || '', now.toISOString().split('T')[0], monthLabel]
+      );
+
+      // 3. Create pending due for current month
+      const dueDate = new Date(now.getFullYear(), now.getMonth(), 10)
+        .toISOString().split('T')[0];
+      await db.query(
+        `INSERT INTO fc_dues (student_name, route_name, due_amount, due_month, due_date, status)
+         VALUES (?, ?, 0, ?, ?, 'pending')`,
+        [enquiry.student_name, enquiry.route_requested || '', monthLabel, dueDate]
+      );
+    }
+
+    // 4. AUTO-LOG a completed follow-up (always, even if transport already existed)
     await db.query(
-      `INSERT INTO fc_transport (student_name, class, route_name, pickup_point, drop_point, monthly_fee, status)
-       VALUES (?, ?, ?, '', '', 0, 'active')`,
-      [enquiry.student_name, enquiry.class || '', enquiry.route_requested || '']
+      `INSERT INTO fc_followups
+       (student_name, counsellor, action_taken, action_type, next_action, priority, status)
+       VALUES (?, ?, ?, 'admin', 'Enquiry resolved — student admitted to transport', ?, 'completed')`,
+      [
+        enquiry.student_name,
+        enquiry.owner || 'Admin',
+        `Enquiry resolved by ${enquiry.owner || 'Admin'}. Student admitted for route: ${enquiry.route_requested || 'N/A'}. Source: ${enquiry.source || 'N/A'}.`,
+        enquiry.priority || 'medium',
+      ]
     );
 
-    // 2. Create pending payment for current month
-    const now = new Date();
-    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
-    await db.query(
-      `INSERT INTO fc_payments (student_name, class, amount_paid, payment_date, payment_mode, month_paid, remarks)
-       VALUES (?, ?, 0, ?, 'cash', ?, 'Auto-created on enquiry resolution')`,
-      [enquiry.student_name, enquiry.class || '', now.toISOString().split('T')[0], monthLabel]
-    );
-
-    // 3. Create pending due for current month
-    const dueDate = new Date(now.getFullYear(), now.getMonth(), 10)
-      .toISOString().split('T')[0];
-    await db.query(
-      `INSERT INTO fc_dues (student_name, route_name, due_amount, due_month, due_date, status)
-       VALUES (?, ?, 0, ?, ?, 'pending')`,
-      [enquiry.student_name, enquiry.route_requested || '', monthLabel, dueDate]
-    );
   } catch (err) {
     console.error('autoCreateFromEnquiry error:', err.message);
   }
