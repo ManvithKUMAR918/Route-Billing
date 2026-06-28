@@ -115,30 +115,68 @@ router.put('/:id', async (req, res) => {
 // ── Helper: auto-create records on resolve ──────────────────
 async function autoCreateFromEnquiry(enquiry) {
   try {
-    // Check duplicate in fc_transport
-    const [existing] = await db.query(
+    // Check if student already exists in fc_students
+    const [existingStudent] = await db.query(
+      'SELECT id FROM fc_students WHERE name = ? LIMIT 1',
+      [enquiry.student_name]
+    );
+
+    // Check duplicate transport
+    const [existingTransport] = await db.query(
       'SELECT id FROM fc_transport WHERE student_name = ? AND route_name = ? LIMIT 1',
       [enquiry.student_name, enquiry.route_requested || '']
     );
 
-    if (existing.length === 0) {
-      // 1. Create transport record
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
+
+    if (existingStudent.length === 0) {
+      // Generate admission number: ADM-YYYYMM-XXXX
+      const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const [[countRow]] = await db.query(
+        "SELECT COUNT(*) AS cnt FROM fc_students WHERE admission_no LIKE ?",
+        [`ADM-${yyyymm}-%`]
+      );
+      const seq = String(countRow.cnt + 1).padStart(4, '0');
+      const admission_no = `ADM-${yyyymm}-${seq}`;
+
+      // 1. CREATE STUDENT RECORD ────────────────────────────
+      await db.query(
+        `INSERT INTO fc_students
+         (name, admission_no, class, section, phone, parent_name, email,
+          address, route_name, monthly_fee, status, enquiry_id, joined_date)
+         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, 0, 'active', ?, ?)`,
+        [
+          enquiry.student_name,
+          admission_no,
+          enquiry.class || '',
+          enquiry.phone || '',
+          enquiry.parent_name || '',
+          enquiry.email || '',
+          enquiry.address || '',
+          enquiry.route_requested || '',
+          enquiry.id,
+          now.toISOString().split('T')[0],
+        ]
+      );
+    }
+
+    if (existingTransport.length === 0) {
+      // 2. Create transport record
       await db.query(
         `INSERT INTO fc_transport (student_name, class, route_name, pickup_point, drop_point, monthly_fee, status)
          VALUES (?, ?, ?, '', '', 0, 'active')`,
         [enquiry.student_name, enquiry.class || '', enquiry.route_requested || '']
       );
 
-      // 2. Create pending payment for current month
-      const now = new Date();
-      const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
+      // 3. Create pending payment for current month
       await db.query(
         `INSERT INTO fc_payments (student_name, class, amount_paid, payment_date, payment_mode, month_paid, remarks)
          VALUES (?, ?, 0, ?, 'cash', ?, 'Auto-created on enquiry resolution')`,
         [enquiry.student_name, enquiry.class || '', now.toISOString().split('T')[0], monthLabel]
       );
 
-      // 3. Create pending due for current month
+      // 4. Create pending due for current month
       const dueDate = new Date(now.getFullYear(), now.getMonth(), 10)
         .toISOString().split('T')[0];
       await db.query(
@@ -148,7 +186,7 @@ async function autoCreateFromEnquiry(enquiry) {
       );
     }
 
-    // 4. AUTO-LOG a completed follow-up (always, even if transport already existed)
+    // 5. AUTO-LOG a completed follow-up (always)
     await db.query(
       `INSERT INTO fc_followups
        (student_name, counsellor, action_taken, action_type, next_action, priority, status)
@@ -165,5 +203,6 @@ async function autoCreateFromEnquiry(enquiry) {
     console.error('autoCreateFromEnquiry error:', err.message);
   }
 }
+
 
 module.exports = router;
