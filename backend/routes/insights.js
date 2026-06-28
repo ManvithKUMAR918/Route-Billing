@@ -2,98 +2,108 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// Rule-based AI logic engine — runs over live DB data
-function generateInsights({ enquiries = [], payments = [], dues = [], transport = [] }) {
-  const insights = [];
-  const now = new Date();
-
-  // Rule 1: High priority pending enquiries
-  const highPriorityPending = enquiries.filter(e => e.status === 'pending' && e.priority === 'high');
-  if (highPriorityPending.length > 0) {
-    insights.push({
-      id: 1, type: 'alert', severity: 'high',
-      title: 'Urgent Enquiries Pending',
-      message: `${highPriorityPending.length} high-priority enquiry(ies) have not been actioned. Immediate follow-up required.`,
-      action: 'View Enquiries', action_link: '/enquiry',
-      students: highPriorityPending.map(e => e.student_name),
-      generated_at: now.toISOString()
-    });
-  }
-
-  // Rule 2: Overdue pending dues
-  const overdueDues = dues.filter(d => d.status === 'pending' && d.due_date && new Date(d.due_date) < now);
-  if (overdueDues.length > 0) {
-    insights.push({
-      id: 2, type: 'warning', severity: 'high',
-      title: 'Overdue Transport Fees',
-      message: `${overdueDues.length} student(s) have overdue transport fee payments totalling ₹${overdueDues.reduce((s, d) => s + parseFloat(d.due_amount || 0), 0).toLocaleString()}.`,
-      action: 'View Dues', action_link: '/dues',
-      students: overdueDues.map(d => d.student_name),
-      generated_at: now.toISOString()
-    });
-  }
-
-  // Rule 3: Inactive transport with no exit record
-  const inactiveTransport = transport.filter(t => t.status === 'inactive');
-  if (inactiveTransport.length > 0) {
-    insights.push({
-      id: 3, type: 'info', severity: 'medium',
-      title: 'Inactive Transport Assignments',
-      message: `${inactiveTransport.length} student(s) have inactive transport status. Review if exit records are needed.`,
-      action: 'View Transport', action_link: '/transport',
-      students: inactiveTransport.map(t => t.student_name),
-      generated_at: now.toISOString()
-    });
-  }
-
-  // Rule 4: Collection rate
-  const totalCollected = payments.reduce((s, p) => s + parseFloat(p.amount_paid || 0), 0);
-  const totalDueAmount  = dues.reduce((s, d) => s + parseFloat(d.due_amount || 0), 0);
-  const totalExpected   = totalCollected + totalDueAmount;
-  const collectionRate  = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
-
-  if (collectionRate >= 80) {
-    insights.push({
-      id: 4, type: 'success', severity: 'low',
-      title: 'Strong Collection Rate',
-      message: `Current collection rate is ${collectionRate}%. Most transport fees have been collected this month. Great performance!`,
-      action: 'View Reports', action_link: '/reports',
-      students: [], generated_at: now.toISOString()
-    });
-  } else {
-    insights.push({
-      id: 4, type: 'warning', severity: 'medium',
-      title: 'Collection Rate Needs Attention',
-      message: `Current collection rate is only ${collectionRate}%. Consider sending reminders to parents with pending dues.`,
-      action: 'Send Reminders', action_link: '/messages',
-      students: [], generated_at: now.toISOString()
-    });
-  }
-
-  // Rule 5: Monthly summary
-  insights.push({
-    id: 5, type: 'summary', severity: 'low',
-    title: 'Live Monthly Summary',
-    message: `Total enrolled: ${transport.length} students. Active: ${transport.filter(t => t.status === 'active').length}. Fees collected: ₹${totalCollected.toLocaleString()}. Dues pending: ₹${totalDueAmount.toLocaleString()}.`,
-    action: 'Full Report', action_link: '/reports',
-    students: [], generated_at: now.toISOString()
-  });
-
-  return insights;
-}
-
-// GET — generate insights from live MySQL data
+// ── GET /api/insights ───────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const [enquiries] = await db.query('SELECT student_name, status, priority FROM enquiries');
-    const [payments]  = await db.query('SELECT amount_paid FROM transport_payments');
-    const [dues]      = await db.query('SELECT student_name, due_amount, due_date, status FROM transport_dues');
-    const [transport] = await db.query('SELECT student_name, status FROM transport_assignments');
+    const insights = [];
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
 
-    const insights = generateInsights({ enquiries, payments, dues, transport });
-    res.json({ success: true, data: insights, generated_at: new Date().toISOString() });
+    // ── RULE 1: Overdue Dues Alert ─────────────────────────
+    const [[overdueRow]] = await db.query(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(due_amount), 0) AS total
+       FROM fc_dues WHERE status != 'paid' AND due_date < CURDATE()`
+    );
+    if (overdueRow.cnt > 0) {
+      insights.push({
+        type: 'alert',
+        icon: '🚨',
+        title: 'Overdue Transport Fees',
+        message: `${overdueRow.cnt} student${overdueRow.cnt > 1 ? 's' : ''} have overdue transport fees totalling ₹${parseFloat(overdueRow.total).toLocaleString()}. Immediate follow-up required.`,
+        color: '#ef4444',
+        priority: 1,
+      });
+    }
+
+    // ── RULE 2: High Collection Month ─────────────────────
+    const [[thisMonth]] = await db.query(
+      "SELECT COALESCE(SUM(amount_paid), 0) AS total FROM fc_payments WHERE month_paid = ?",
+      [monthLabel]
+    );
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthLabel = lastMonthDate.toLocaleString('default', { month: 'long' }) + ' ' + lastMonthDate.getFullYear();
+    const [[lastMonth]] = await db.query(
+      "SELECT COALESCE(SUM(amount_paid), 0) AS total FROM fc_payments WHERE month_paid = ?",
+      [lastMonthLabel]
+    );
+    const thisTotal = parseFloat(thisMonth.total);
+    const lastTotal = parseFloat(lastMonth.total);
+    if (lastTotal > 0 && thisTotal > lastTotal * 1.2) {
+      const pct = Math.round(((thisTotal - lastTotal) / lastTotal) * 100);
+      insights.push({
+        type: 'success',
+        icon: '📈',
+        title: 'Collection Increased',
+        message: `Collection is up ${pct}% compared to last month (₹${thisTotal.toLocaleString()} vs ₹${lastTotal.toLocaleString()}).`,
+        color: '#10b981',
+        priority: 2,
+      });
+    }
+
+    // ── RULE 3: Pending Enquiries > 3 days ────────────────
+    const [[oldEnquiries]] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM fc_enquiries
+       WHERE status = 'pending'
+       AND created_at < DATE_SUB(NOW(), INTERVAL 3 DAY)`
+    );
+    if (oldEnquiries.cnt > 0) {
+      insights.push({
+        type: 'warning',
+        icon: '⏳',
+        title: 'Enquiries Need Follow-up',
+        message: `${oldEnquiries.cnt} enquir${oldEnquiries.cnt > 1 ? 'ies' : 'y'} have not been followed up in 3+ days. Assign a counsellor.`,
+        color: '#f59e0b',
+        priority: 3,
+      });
+    }
+
+    // ── RULE 4: Route with Most Dues ──────────────────────
+    const [[topRoute]] = await db.query(
+      `SELECT route_name, COALESCE(SUM(due_amount), 0) AS total
+       FROM fc_dues WHERE status != 'paid'
+       GROUP BY route_name ORDER BY total DESC LIMIT 1`
+    );
+    if (topRoute && topRoute.route_name && parseFloat(topRoute.total) > 0) {
+      insights.push({
+        type: 'info',
+        icon: '🗺️',
+        title: 'Route with Highest Dues',
+        message: `Route "${topRoute.route_name}" has the highest pending dues of ₹${parseFloat(topRoute.total).toLocaleString()}.`,
+        color: '#6366f1',
+        priority: 4,
+      });
+    }
+
+    // ── RULE 5: Monthly Expense Summary ───────────────────
+    const [[expRow]] = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM fc_expenses
+       WHERE DATE_FORMAT(date, '%M %Y') = ?`,
+      [monthLabel]
+    );
+    insights.push({
+      type: 'info',
+      icon: '💸',
+      title: 'Monthly Expenses',
+      message: `Total transport expenses for ${monthLabel}: ₹${parseFloat(expRow.total).toLocaleString()}.`,
+      color: '#06b6d4',
+      priority: 5,
+    });
+
+    // Sort by priority
+    insights.sort((a, b) => a.priority - b.priority);
+    res.json({ success: true, data: insights });
   } catch (err) {
-    console.error('Insights GET error:', err.message);
+    console.error('GET /insights:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });

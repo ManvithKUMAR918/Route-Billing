@@ -2,55 +2,80 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET all exit records
+// ── GET /api/exits ──────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM transport_exits ORDER BY created_at DESC');
-    res.json({ success: true, data: rows, total: rows.length });
+    const [rows] = await db.query('SELECT * FROM fc_exits ORDER BY created_at DESC');
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('Exits GET error:', err.message);
+    console.error('GET /exits:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST record a student exit
+// ── POST /api/exits ─────────────────────────────────────────
 router.post('/', async (req, res) => {
   const {
-    student_id, student_name, class: cls, admission_no, parent_name, phone,
-    exit_reason, exit_date, transport_end_date, outstanding_dues, refund_amount, recorded_by, notes
+    student_name, class: cls, admission_no, parent_name, phone,
+    exit_reason, exit_date, transport_end_date,
+    outstanding_dues, refund_amount, recorded_by, notes,
   } = req.body;
 
-  if (!student_name || !exit_date) {
-    return res.status(400).json({ success: false, message: 'Student name and exit date are required' });
+  // Validation
+  if (!student_name?.trim()) {
+    return res.status(400).json({ success: false, message: 'Student name is required' });
   }
+  if (!exit_reason) {
+    return res.status(400).json({ success: false, message: 'Exit reason is required' });
+  }
+  if (!exit_date) {
+    return res.status(400).json({ success: false, message: 'Exit date is required' });
+  }
+
+  const refundAmt = parseFloat(refund_amount) || 0;
+  const refundStatus = refundAmt > 0 ? 'pending' : 'processed';
+
   try {
-    // Insert into exits table
+    // 1. Insert exit record
     const [result] = await db.query(
-      `INSERT INTO transport_exits 
-        (student_id, student_name, class, admission_no, parent_name, phone, exit_reason, exit_date, transport_end_date, outstanding_dues, refund_amount, refund_status, recorded_by, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO fc_exits
+       (student_name, class, admission_no, parent_name, phone,
+        exit_reason, exit_date, transport_end_date,
+        outstanding_dues, refund_amount, refund_status, recorded_by, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        student_id || null, student_name, cls, admission_no, parent_name, phone,
-        exit_reason, exit_date, transport_end_date || exit_date,
-        parseFloat(outstanding_dues || 0), parseFloat(refund_amount || 0),
-        recorded_by || 'Admin', notes || ''
+        student_name.trim(), cls || '', admission_no || '', parent_name || '', phone || '',
+        exit_reason,
+        exit_date || new Date().toISOString().split('T')[0],
+        transport_end_date || exit_date || new Date().toISOString().split('T')[0],
+        parseFloat(outstanding_dues) || 0,
+        refundAmt,
+        refundStatus,
+        recorded_by || 'Admin',
+        notes || null,
       ]
     );
 
-    // Mark student's transport assignments as inactive
-    if (student_id) {
-      await db.query(
-        "UPDATE transport_assignments SET status = 'exit' WHERE student_id = ? AND status = 'active'",
-        [student_id]
-      );
-      // Update student status to exit
-      await db.query("UPDATE students SET status = 'exit' WHERE id = ?", [student_id]);
-    }
+    // 2. Deactivate transport records for this student
+    await db.query(
+      "UPDATE fc_transport SET status = 'exit', last_updated = NOW() WHERE student_name = ?",
+      [student_name.trim()]
+    );
 
-    const [newRow] = await db.query('SELECT * FROM transport_exits WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Exit record saved', data: newRow[0] });
+    // 3. Mark all pending dues as paid (student is exiting)
+    await db.query(
+      "UPDATE fc_dues SET status = 'paid', last_updated = NOW() WHERE student_name = ? AND status != 'paid'",
+      [student_name.trim()]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Exit record saved. Transport assignment deactivated.',
+      id: result.insertId,
+      refund_status: refundStatus,
+    });
   } catch (err) {
-    console.error('Exits POST error:', err.message);
+    console.error('POST /exits:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });

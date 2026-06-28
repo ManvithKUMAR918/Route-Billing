@@ -2,66 +2,98 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET all dues (optional filter by status)
+// ── GET /api/dues ───────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM transport_dues';
+    const { status, due_month, search } = req.query;
+    let sql = 'SELECT * FROM fc_dues';
+    const conditions = [];
     const params = [];
-
-    if (req.query.status) {
-      query += ' WHERE status = ?';
-      params.push(req.query.status);
+    if (status)    { conditions.push('status = ?');    params.push(status); }
+    if (due_month) { conditions.push('due_month = ?'); params.push(due_month); }
+    if (search) {
+      conditions.push('(student_name LIKE ? OR route_name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
     }
-    query += ' ORDER BY due_date ASC';
-
-    const [rows] = await db.query(query, params);
-    const totalDue = rows.reduce((sum, d) => sum + parseFloat(d.due_amount || 0), 0);
-    res.json({ success: true, data: rows, total: rows.length, totalDue });
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY due_date ASC, created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('Dues GET error:', err.message);
+    console.error('GET /dues:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST add a new due
+// ── POST /api/dues ──────────────────────────────────────────
 router.post('/', async (req, res) => {
-  const { student_id, student_name, route_name, due_amount, due_month, due_date, remarks } = req.body;
-  if (!due_amount) {
-    return res.status(400).json({ success: false, message: 'Due amount is required' });
+  const { student_name, route_name, due_amount, due_month, due_date, remarks } = req.body;
+
+  if (!student_name?.trim()) {
+    return res.status(400).json({ success: false, message: 'Student name is required' });
   }
+  if (!due_amount || parseFloat(due_amount) <= 0) {
+    return res.status(400).json({ success: false, message: 'Due amount must be greater than 0' });
+  }
+
   try {
     const [result] = await db.query(
-      `INSERT INTO transport_dues 
-        (student_id, student_name, route_name, due_amount, due_month, due_date, status, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-      [student_id || null, student_name, route_name, parseFloat(due_amount), due_month, due_date, remarks || '']
+      `INSERT INTO fc_dues (student_name, route_name, due_amount, due_month, due_date, remarks, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        student_name.trim(), route_name || '',
+        parseFloat(due_amount),
+        due_month || '',
+        due_date || null,
+        remarks || null,
+      ]
     );
-    const [newRow] = await db.query('SELECT * FROM transport_dues WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Due added!', data: newRow[0] });
+    res.status(201).json({ success: true, message: 'Due added', id: result.insertId });
   } catch (err) {
-    console.error('Dues POST error:', err.message);
+    console.error('POST /dues:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// PUT update due (mark paid / partial / change amount)
+// ── PUT /api/dues/:id ───────────────────────────────────────
 router.put('/:id', async (req, res) => {
-  const { due_amount, status, remarks } = req.body;
-  try {
-    const fields = [];
-    const params = [];
-    if (due_amount !== undefined) { fields.push('due_amount = ?'); params.push(parseFloat(due_amount)); }
-    if (status !== undefined)     { fields.push('status = ?');     params.push(status); }
-    if (remarks !== undefined)    { fields.push('remarks = ?');    params.push(remarks); }
-    if (!fields.length) return res.status(400).json({ success: false, message: 'No fields to update' });
+  const { id } = req.params;
+  const { status, due_amount, due_date, remarks } = req.body;
 
-    params.push(req.params.id);
-    await db.query(`UPDATE transport_dues SET ${fields.join(', ')} WHERE id = ?`, params);
-    const [updated] = await db.query('SELECT * FROM transport_dues WHERE id = ?', [req.params.id]);
-    if (!updated.length) return res.status(404).json({ success: false, message: 'Not found' });
-    res.json({ success: true, message: 'Due updated', data: updated[0] });
+  const [[record]] = await db.query('SELECT id FROM fc_dues WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ success: false, message: 'Due not found' });
+
+  const updates = { last_updated: new Date() };
+  if (status)     updates.status     = status;
+  if (due_amount) updates.due_amount = parseFloat(due_amount);
+  if (due_date)   updates.due_date   = due_date;
+  if (remarks !== undefined) updates.remarks = remarks;
+
+  const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values     = [...Object.values(updates), id];
+
+  try {
+    await db.query(`UPDATE fc_dues SET ${setClauses} WHERE id = ?`, values);
+    res.json({ success: true, message: 'Due updated' });
   } catch (err) {
-    console.error('Dues PUT error:', err.message);
+    console.error('PUT /dues/:id:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET /api/dues/summary ───────────────────────────────────
+router.get('/summary', async (req, res) => {
+  try {
+    const [[summary]] = await db.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status != 'paid' THEN due_amount ELSE 0 END), 0) AS total_due,
+         COUNT(CASE WHEN status = 'pending' THEN 1 END)  AS pending_count,
+         COUNT(CASE WHEN status = 'partial' THEN 1 END)  AS partial_count,
+         COUNT(CASE WHEN status = 'paid'    THEN 1 END)  AS paid_count
+       FROM fc_dues`
+    );
+    res.json({ success: true, data: summary });
+  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });

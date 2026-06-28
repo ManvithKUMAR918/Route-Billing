@@ -2,91 +2,170 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET all transport assignments
+// ── GET /api/transport ──────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM transport_assignments';
-    const params = [];
+    const { status, search } = req.query;
+    let sql = 'SELECT * FROM fc_transport';
     const conditions = [];
-
-    if (req.query.status) {
-      conditions.push('status = ?');
-      params.push(req.query.status);
+    const params = [];
+    if (status) { conditions.push('status = ?'); params.push(status); }
+    if (search) {
+      conditions.push('(student_name LIKE ? OR route_name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
     }
-    if (req.query.route) {
-      conditions.push('route_name = ?');
-      params.push(req.query.route);
-    }
-    if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY created_at DESC';
-
-    const [rows] = await db.query(query, params);
-    res.json({ success: true, data: rows, total: rows.length });
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('Transport GET error:', err.message);
+    console.error('GET /transport:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// GET single transport record
-router.get('/:id', async (req, res) => {
+// ── GET /api/transport/alert-students ──────────────────────
+router.get('/alert-students', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM transport_assignments WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ success: false, message: 'Record not found' });
-    res.json({ success: true, data: rows[0] });
+    const [rows] = await db.query(
+      `SELECT t.*, d.due_amount, d.due_month, d.due_date, d.status as due_status
+       FROM fc_transport t
+       LEFT JOIN fc_dues d ON d.student_name = t.student_name AND d.status != 'paid'
+       WHERE t.status = 'active'
+       ORDER BY d.due_date ASC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('GET /transport/alert-students:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET /api/transport/alert-logs ──────────────────────────
+router.get('/alert-logs', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM fc_messages ORDER BY sent_at DESC LIMIT 100'
+    );
+    res.json({ success: true, data: rows });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST add transport assignment
+// ── POST /api/transport ─────────────────────────────────────
 router.post('/', async (req, res) => {
-  const { student_id, student_name, class: cls, route_name, pickup_point, drop_point, monthly_fee, vehicle_no, driver_name, start_date } = req.body;
-  if (!route_name || !monthly_fee) {
-    return res.status(400).json({ success: false, message: 'Route name and monthly fee are required' });
+  const { student_name, class: cls, route_name, pickup_point,
+          drop_point, monthly_fee, vehicle_no, driver_name } = req.body;
+
+  if (!student_name?.trim()) {
+    return res.status(400).json({ success: false, message: 'Student name is required' });
   }
+  if (!route_name?.trim()) {
+    return res.status(400).json({ success: false, message: 'Route name is required' });
+  }
+  if (!monthly_fee || parseFloat(monthly_fee) < 0) {
+    return res.status(400).json({ success: false, message: 'Monthly fee must be a valid amount' });
+  }
+
   try {
     const [result] = await db.query(
-      `INSERT INTO transport_assignments 
-        (student_id, student_name, class, route_name, pickup_point, drop_point, monthly_fee, vehicle_no, driver_name, start_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [student_id || null, student_name, cls, route_name, pickup_point, drop_point, parseFloat(monthly_fee), vehicle_no, driver_name, start_date || new Date().toISOString().split('T')[0]]
+      `INSERT INTO fc_transport
+       (student_name, class, route_name, pickup_point, drop_point,
+        monthly_fee, vehicle_no, driver_name, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [
+        student_name.trim(), cls || '', route_name.trim(),
+        pickup_point || '', drop_point || '',
+        parseFloat(monthly_fee) || 0,
+        vehicle_no || '', driver_name || '',
+      ]
     );
-    const [newRow] = await db.query('SELECT * FROM transport_assignments WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Transport assignment added!', data: newRow[0] });
+    res.status(201).json({ success: true, message: 'Transport record added', id: result.insertId });
   } catch (err) {
-    console.error('Transport POST error:', err.message);
+    console.error('POST /transport:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// PUT update transport assignment
+// ── PUT /api/transport/:id ──────────────────────────────────
 router.put('/:id', async (req, res) => {
-  const { student_name, class: cls, route_name, pickup_point, drop_point, monthly_fee, vehicle_no, driver_name, status } = req.body;
+  const { id } = req.params;
+  const { status, route_name, pickup_point, drop_point, monthly_fee, vehicle_no, driver_name } = req.body;
+
+  const [[record]] = await db.query('SELECT * FROM fc_transport WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ success: false, message: 'Transport record not found' });
+
+  const updates = { last_updated: new Date() };
+  if (status)       updates.status       = status;
+  if (route_name)   updates.route_name   = route_name;
+  if (pickup_point) updates.pickup_point = pickup_point;
+  if (drop_point)   updates.drop_point   = drop_point;
+  if (vehicle_no)   updates.vehicle_no   = vehicle_no;
+  if (driver_name)  updates.driver_name  = driver_name;
+  if (monthly_fee !== undefined) updates.monthly_fee = parseFloat(monthly_fee);
+
+  const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values     = [...Object.values(updates), id];
+
+  try {
+    await db.query(`UPDATE fc_transport SET ${setClauses} WHERE id = ?`, values);
+
+    // Cascade fee update to pending payments for this student
+    if (monthly_fee !== undefined && parseFloat(monthly_fee) !== parseFloat(record.monthly_fee)) {
+      await db.query(
+        `UPDATE fc_dues SET due_amount = ? WHERE student_name = ? AND status != 'paid'`,
+        [parseFloat(monthly_fee), record.student_name]
+      );
+    }
+
+    res.json({ success: true, message: 'Transport record updated' });
+  } catch (err) {
+    console.error('PUT /transport/:id:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── DELETE /api/transport/:id ───────────────────────────────
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  const [[record]] = await db.query('SELECT id FROM fc_transport WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ success: false, message: 'Record not found' });
+
+  try {
+    await db.query("UPDATE fc_transport SET status = 'inactive' WHERE id = ?", [id]);
+    res.json({ success: true, message: 'Record deactivated' });
+  } catch (err) {
+    console.error('DELETE /transport/:id:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/transport/mark-paid ──────────────────────────
+router.post('/mark-paid', async (req, res) => {
+  const { student_name, month_paid } = req.body;
   try {
     await db.query(
-      `UPDATE transport_assignments 
-       SET student_name=?, class=?, route_name=?, pickup_point=?, drop_point=?, monthly_fee=?, vehicle_no=?, driver_name=?, status=?
-       WHERE id=?`,
-      [student_name, cls, route_name, pickup_point, drop_point, parseFloat(monthly_fee), vehicle_no, driver_name, status, req.params.id]
+      "UPDATE fc_dues SET status = 'paid', last_updated = NOW() WHERE student_name = ? AND due_month = ?",
+      [student_name, month_paid]
     );
-    const [updated] = await db.query('SELECT * FROM transport_assignments WHERE id = ?', [req.params.id]);
-    if (!updated.length) return res.status(404).json({ success: false, message: 'Not found' });
-    res.json({ success: true, message: 'Updated successfully', data: updated[0] });
+    res.json({ success: true, message: 'Marked as paid' });
   } catch (err) {
-    console.error('Transport PUT error:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// DELETE transport assignment
-router.delete('/:id', async (req, res) => {
+// ── POST /api/transport/send-manual-alert ──────────────────
+router.post('/send-manual-alert', async (req, res) => {
+  const { student_name, parent_name, phone, message_body } = req.body;
   try {
-    const [result] = await db.query('DELETE FROM transport_assignments WHERE id = ?', [req.params.id]);
-    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Not found' });
-    res.json({ success: true, message: 'Deleted successfully' });
+    await db.query(
+      `INSERT INTO fc_messages (student_name, parent_name, phone, message_type, message_body, status)
+       VALUES (?, ?, ?, 'Payment Reminder', ?, 'Sent')`,
+      [student_name, parent_name || '', phone || '', message_body || '']
+    );
+    res.json({ success: true, message: 'Alert recorded' });
   } catch (err) {
-    console.error('Transport DELETE error:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });

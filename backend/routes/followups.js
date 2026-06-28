@@ -2,66 +2,80 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET all followups (optional filter by status / counsellor)
+// ── GET /api/followups ──────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM followups';
-    const params = [];
+    const { status, priority } = req.query;
+    let sql = 'SELECT * FROM fc_followups';
     const conditions = [];
-
-    if (req.query.status)     { conditions.push('status = ?');     params.push(req.query.status); }
-    if (req.query.counsellor) { conditions.push('counsellor = ?'); params.push(req.query.counsellor); }
-    if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY created_at DESC';
-
-    const [rows] = await db.query(query, params);
-    res.json({ success: true, data: rows, total: rows.length });
+    const params = [];
+    if (status)   { conditions.push('status = ?');   params.push(status); }
+    if (priority) { conditions.push('priority = ?'); params.push(priority); }
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('Followups GET error:', err.message);
+    console.error('GET /followups:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST log a new followup
+// ── POST /api/followups ─────────────────────────────────────
 router.post('/', async (req, res) => {
-  const { enquiry_id, student_name, counsellor, action_taken, action_type, next_action, next_action_date, priority } = req.body;
-  if (!action_taken) {
-    return res.status(400).json({ success: false, message: 'Action taken is required' });
+  const { student_name, counsellor, action_taken, action_type,
+          next_action, next_action_date, priority } = req.body;
+
+  // Validation
+  const errors = {};
+  if (!student_name?.trim()) errors.student_name = 'Student name is required';
+  if (!action_taken?.trim()) errors.action_taken  = 'Action taken is required';
+  if (Object.keys(errors).length > 0) {
+    return res.status(400).json({ success: false, message: 'Validation failed', errors });
   }
+
   try {
     const [result] = await db.query(
-      `INSERT INTO followups 
-        (enquiry_id, student_name, counsellor, action_taken, action_type, status, next_action, next_action_date, priority)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
-      [enquiry_id || null, student_name, counsellor || 'Admin', action_taken, action_type || 'call', next_action || '', next_action_date || null, priority || 'medium']
+      `INSERT INTO fc_followups
+       (student_name, counsellor, action_taken, action_type, next_action, next_action_date, priority, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        student_name.trim(), counsellor || 'Admin',
+        action_taken.trim(), action_type || 'call',
+        next_action || null,
+        next_action_date || null,
+        priority || 'medium',
+      ]
     );
-    const [newRow] = await db.query('SELECT * FROM followups WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Follow-up logged', data: newRow[0] });
+    res.status(201).json({ success: true, message: 'Follow-up logged successfully', id: result.insertId });
   } catch (err) {
-    console.error('Followups POST error:', err.message);
+    console.error('POST /followups:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// PUT update followup status / next action
+// ── PUT /api/followups/:id ──────────────────────────────────
 router.put('/:id', async (req, res) => {
-  const { status, action_taken, next_action, next_action_date } = req.body;
-  try {
-    const fields = [];
-    const params = [];
-    if (status !== undefined)          { fields.push('status = ?');          params.push(status); }
-    if (action_taken !== undefined)    { fields.push('action_taken = ?');    params.push(action_taken); }
-    if (next_action !== undefined)     { fields.push('next_action = ?');     params.push(next_action); }
-    if (next_action_date !== undefined){ fields.push('next_action_date = ?');params.push(next_action_date || null); }
-    if (!fields.length) return res.status(400).json({ success: false, message: 'No fields to update' });
+  const { id } = req.params;
+  const { status, next_action, next_action_date, priority } = req.body;
 
-    params.push(req.params.id);
-    await db.query(`UPDATE followups SET ${fields.join(', ')} WHERE id = ?`, params);
-    const [updated] = await db.query('SELECT * FROM followups WHERE id = ?', [req.params.id]);
-    if (!updated.length) return res.status(404).json({ success: false, message: 'Not found' });
-    res.json({ success: true, data: updated[0] });
+  const [[record]] = await db.query('SELECT id FROM fc_followups WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ success: false, message: 'Follow-up not found' });
+
+  const updates = { last_updated: new Date() };
+  if (status)           updates.status           = status;
+  if (next_action)      updates.next_action      = next_action;
+  if (next_action_date) updates.next_action_date = next_action_date;
+  if (priority)         updates.priority         = priority;
+
+  const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values     = [...Object.values(updates), id];
+
+  try {
+    await db.query(`UPDATE fc_followups SET ${setClauses} WHERE id = ?`, values);
+    res.json({ success: true, message: 'Follow-up updated' });
   } catch (err) {
-    console.error('Followups PUT error:', err.message);
+    console.error('PUT /followups/:id:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });

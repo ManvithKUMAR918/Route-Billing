@@ -2,158 +2,179 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET finance summary — all computed live from MySQL
+// ── GET /api/finance/summary ────────────────────────────────
 router.get('/summary', async (req, res) => {
   try {
-    // Revenue
-    const [[{ total_collected }]] = await db.query('SELECT COALESCE(SUM(amount_paid), 0) AS total_collected FROM transport_payments');
-    const [[{ total_dues }]]      = await db.query("SELECT COALESCE(SUM(due_amount), 0) AS total_dues FROM transport_dues WHERE status != 'paid'");
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
 
-    // Expected = sum of all monthly_fee for active assignments
-    const [[{ total_expected }]] = await db.query("SELECT COALESCE(SUM(monthly_fee), 0) AS total_expected FROM transport_assignments WHERE status = 'active'");
-
-    const collection_rate = total_expected > 0
-      ? Math.round((parseFloat(total_collected) / parseFloat(total_expected)) * 100 * 10) / 10
-      : 0;
-
-    // Route-wise breakdown
-    const [assignments] = await db.query(
-      `SELECT ta.route_name,
-              COUNT(*) AS students,
-              SUM(ta.monthly_fee) AS monthly_total,
-              COALESCE(SUM(tp.amount_paid), 0) AS collected
-       FROM transport_assignments ta
-       LEFT JOIN transport_payments tp ON ta.student_id = tp.student_id
-       WHERE ta.status = 'active'
-       GROUP BY ta.route_name`
+    // Income: payments this month
+    const [[incomeRow]] = await db.query(
+      'SELECT COALESCE(SUM(amount_paid), 0) AS total_income FROM fc_payments WHERE month_paid = ?',
+      [monthLabel]
     );
-    const route_fees = assignments.map(r => ({
-      route: r.route_name,
-      students: r.students,
-      monthly_total: parseFloat(r.monthly_total) || 0,
-      collected: parseFloat(r.collected) || 0,
-      due: Math.max(0, parseFloat(r.monthly_total) - parseFloat(r.collected))
-    }));
 
-    // Expenses
-    const [expenses] = await db.query('SELECT * FROM expenses ORDER BY date DESC');
-    const [[{ total_expenses }]] = await db.query('SELECT COALESCE(SUM(amount), 0) AS total_expenses FROM expenses');
-
-    // Payment mode breakdown
-    const [payment_modes] = await db.query(
-      'SELECT payment_mode AS mode, COUNT(*) AS count, SUM(amount_paid) AS amount FROM transport_payments GROUP BY payment_mode'
+    // Expenses this month
+    const [[expenseRow]] = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total_expenses FROM fc_expenses
+       WHERE DATE_FORMAT(date, '%M %Y') = ?`,
+      [monthLabel]
     );
-    const payment_modes_formatted = payment_modes.map(pm => ({
-      mode: pm.mode,
-      count: pm.count,
-      amount: parseFloat(pm.amount) || 0
-    }));
+
+    const income   = parseFloat(incomeRow.total_income);
+    const expenses = parseFloat(expenseRow.total_expenses);
+    const net      = income - expenses;
+
+    // Expense breakdown by category
+    const [breakdown] = await db.query(
+      `SELECT category, COALESCE(SUM(amount), 0) AS total
+       FROM fc_expenses WHERE DATE_FORMAT(date, '%M %Y') = ?
+       GROUP BY category ORDER BY total DESC`,
+      [monthLabel]
+    );
+
+    // Monthly collection trend (last 6 months)
+    const [monthlyTrend] = await db.query(
+      `SELECT month_paid AS month, COALESCE(SUM(amount_paid), 0) AS amount
+       FROM fc_payments
+       GROUP BY month_paid ORDER BY MIN(payment_date) ASC LIMIT 6`
+    );
 
     res.json({
       success: true,
       data: {
-        total_expected: parseFloat(total_expected) || 0,
-        total_collected: parseFloat(total_collected) || 0,
-        total_dues: parseFloat(total_dues) || 0,
-        collection_rate,
-        route_fees,
-        expenses: expenses.map(e => ({ ...e, amount: parseFloat(e.amount) })),
-        total_expenses: parseFloat(total_expenses) || 0,
-        net_balance: parseFloat(total_collected) - parseFloat(total_expenses),
-        payment_modes: payment_modes_formatted
-      }
+        month: monthLabel,
+        total_income: income,
+        total_expenses: expenses,
+        net_balance: net,
+        expense_breakdown: breakdown,
+        monthly_trend: monthlyTrend,
+      },
     });
   } catch (err) {
-    console.error('Finance summary error:', err.message);
+    console.error('GET /finance/summary:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// GET all expenses
-router.get('/expenses', async (req, res) => {
-  try {
-    const [rows] = await db.query('SELECT * FROM expenses ORDER BY date DESC');
-    res.json({ success: true, data: rows.map(e => ({ ...e, amount: parseFloat(e.amount) })) });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// POST add expense
-router.post('/expenses', async (req, res) => {
-  const { category, description, amount, date, route, vendor, approved_by, notes } = req.body;
-  if (!category || !description || !amount || !date) {
-    return res.status(400).json({ success: false, message: 'Category, description, amount, and date are required' });
-  }
-  try {
-    const [result] = await db.query(
-      'INSERT INTO expenses (category, description, amount, date, route, vendor, approved_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [category, description, parseFloat(amount), date, route || '', vendor || '', approved_by || 'Admin', notes || '']
-    );
-    const [newRow] = await db.query('SELECT * FROM expenses WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Expense recorded', data: { ...newRow[0], amount: parseFloat(newRow[0].amount) } });
-  } catch (err) {
-    console.error('Expense POST error:', err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// DELETE expense
-router.delete('/expenses/:id', async (req, res) => {
-  try {
-    const [result] = await db.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
-    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Not found' });
-    res.json({ success: true, message: 'Expense deleted' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// GET reports data — monthly collections grouped
+// ── GET /api/finance/reports ────────────────────────────────
 router.get('/reports', async (req, res) => {
   try {
-    const [monthly] = await db.query(
-      `SELECT month_paid AS month,
-              SUM(amount_paid) AS collected
-       FROM transport_payments
-       GROUP BY month_paid
-       ORDER BY MIN(payment_date) ASC`
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
+
+    // Monthly collection grouped by route
+    const [collectionByRoute] = await db.query(
+      `SELECT t.route_name, COALESCE(SUM(p.amount_paid), 0) AS total
+       FROM fc_payments p
+       JOIN fc_transport t ON p.student_name = t.student_name
+       WHERE p.month_paid = ? GROUP BY t.route_name ORDER BY total DESC`,
+      [monthLabel]
     );
 
-    const [monthlyDues] = await db.query(
-      `SELECT due_month AS month,
-              SUM(due_amount) AS dues
-       FROM transport_dues
-       GROUP BY due_month`
+    // Pending dues by route
+    const [duesByRoute] = await db.query(
+      `SELECT route_name, COALESCE(SUM(due_amount), 0) AS total, COUNT(*) AS count
+       FROM fc_dues WHERE status != 'paid'
+       GROUP BY route_name ORDER BY total DESC`
     );
 
-    // Merge monthly collections and dues
-    const monthMap = {};
-    monthly.forEach(m => {
-      const label = m.month ? m.month.split(' ')[0] : 'Unknown';
-      monthMap[m.month] = { month: label, collected: parseFloat(m.collected) || 0, dues: 0 };
+    // Active student count by route
+    const [studentsByRoute] = await db.query(
+      `SELECT route_name, COUNT(*) AS count, COALESCE(SUM(monthly_fee), 0) AS expected_fee
+       FROM fc_transport WHERE status = 'active'
+       GROUP BY route_name ORDER BY count DESC`
+    );
+
+    // Monthly expense breakdown
+    const [expensesByType] = await db.query(
+      `SELECT category AS expense_type, COALESCE(SUM(amount), 0) AS total
+       FROM fc_expenses WHERE DATE_FORMAT(date, '%M %Y') = ?
+       GROUP BY category ORDER BY total DESC`,
+      [monthLabel]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        month: monthLabel,
+        collection_by_route: collectionByRoute,
+        dues_by_route: duesByRoute,
+        students_by_route: studentsByRoute,
+        expenses_by_type: expensesByType,
+      },
     });
-    monthlyDues.forEach(d => {
-      if (monthMap[d.month]) {
-        monthMap[d.month].dues = parseFloat(d.dues) || 0;
-      } else {
-        const label = d.month ? d.month.split(' ')[0] : 'Unknown';
-        monthMap[d.month] = { month: label, collected: 0, dues: parseFloat(d.dues) || 0 };
-      }
-    });
-    const monthlyData = Object.values(monthMap);
-
-    // Route distribution (students per route)
-    const [routeData] = await db.query(
-      `SELECT route_name AS name, COUNT(*) AS value
-       FROM transport_assignments
-       WHERE status = 'active'
-       GROUP BY route_name`
-    );
-
-    res.json({ success: true, data: { monthlyData, routeData } });
   } catch (err) {
-    console.error('Reports GET error:', err.message);
+    console.error('GET /finance/reports:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET /api/finance/expenses ───────────────────────────────
+router.get('/expenses', async (req, res) => {
+  try {
+    const { category } = req.query;
+    let sql = 'SELECT * FROM fc_expenses';
+    const params = [];
+    if (category) { sql += ' WHERE category = ?'; params.push(category); }
+    sql += ' ORDER BY date DESC, created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('GET /finance/expenses:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/finance/expenses ──────────────────────────────
+router.post('/expenses', async (req, res) => {
+  const { category, description, amount, date, route, vendor, approved_by, notes } = req.body;
+
+  if (!category?.trim()) {
+    return res.status(400).json({ success: false, message: 'Category is required' });
+  }
+  if (!description?.trim()) {
+    return res.status(400).json({ success: false, message: 'Description is required' });
+  }
+  if (!amount || parseFloat(amount) <= 0) {
+    return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
+  }
+  if (!date) {
+    return res.status(400).json({ success: false, message: 'Date is required' });
+  }
+  // Cannot be a future date
+  if (new Date(date) > new Date()) {
+    return res.status(400).json({ success: false, message: 'Expense date cannot be in the future' });
+  }
+
+  try {
+    const [result] = await db.query(
+      `INSERT INTO fc_expenses (category, description, amount, date, route, vendor, approved_by, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        category.trim(), description.trim(),
+        parseFloat(amount), date,
+        route || null, vendor || null,
+        approved_by || 'Admin', notes || null,
+      ]
+    );
+    res.status(201).json({ success: true, message: 'Expense recorded', id: result.insertId });
+  } catch (err) {
+    console.error('POST /finance/expenses:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── DELETE /api/finance/expenses/:id ───────────────────────
+router.delete('/expenses/:id', async (req, res) => {
+  const { id } = req.params;
+  const [[record]] = await db.query('SELECT id FROM fc_expenses WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ success: false, message: 'Expense not found' });
+  try {
+    await db.query('DELETE FROM fc_expenses WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Expense deleted' });
+  } catch (err) {
+    console.error('DELETE /finance/expenses/:id:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });

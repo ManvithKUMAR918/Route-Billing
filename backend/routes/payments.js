@@ -2,66 +2,130 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET all payments (optional filter by month_paid)
+// ── GET /api/payments ───────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM transport_payments';
+    const { month_paid, payment_mode, search } = req.query;
+    let sql = 'SELECT * FROM fc_payments';
+    const conditions = [];
     const params = [];
-
-    if (req.query.month) {
-      query += ' WHERE month_paid = ?';
-      params.push(req.query.month);
+    if (month_paid)    { conditions.push('month_paid = ?');    params.push(month_paid); }
+    if (payment_mode)  { conditions.push('payment_mode = ?');  params.push(payment_mode); }
+    if (search) {
+      conditions.push('(student_name LIKE ? OR receipt_number LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
     }
-    query += ' ORDER BY created_at DESC';
-
-    const [rows] = await db.query(query, params);
-    const totalAmount = rows.reduce((sum, p) => sum + parseFloat(p.amount_paid || 0), 0);
-    res.json({ success: true, data: rows, total: rows.length, totalAmount });
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('Payments GET error:', err.message);
+    console.error('GET /payments:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST record a new payment
+// ── POST /api/payments ──────────────────────────────────────
 router.post('/', async (req, res) => {
-  const { student_id, student_name, class: cls, amount_paid, payment_date, payment_mode, month_paid, remarks } = req.body;
-  if (!amount_paid || !payment_date) {
-    return res.status(400).json({ success: false, message: 'Amount and payment date are required' });
-  }
-  try {
-    // Auto-generate receipt number
-    const [[{ cnt }]] = await db.query('SELECT COUNT(*) AS cnt FROM transport_payments');
-    const receipt_number = `REC${String(cnt + 1).padStart(3, '0')}`;
+  const { student_name, class: cls, amount_paid, payment_date,
+          payment_mode, month_paid, remarks } = req.body;
 
+  // Validation
+  if (!student_name?.trim()) {
+    return res.status(400).json({ success: false, message: 'Student name is required' });
+  }
+  if (!amount_paid || parseFloat(amount_paid) <= 0) {
+    return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
+  }
+
+  // Generate receipt number: RCP-YYYYMM-XXXX
+  const now = new Date();
+  const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [[countRow]] = await db.query(
+    "SELECT COUNT(*) AS cnt FROM fc_payments WHERE receipt_number LIKE ?",
+    [`RCP-${yyyymm}-%`]
+  );
+  const seq = String(countRow.cnt + 1).padStart(4, '0');
+  const receipt_number = `RCP-${yyyymm}-${seq}`;
+
+  // Flag late payment
+  let finalRemarks = remarks || '';
+  if (payment_date && month_paid) {
+    const pDate = new Date(payment_date);
+    const pMonth = pDate.getMonth();
+    const pYear  = pDate.getFullYear();
+    const dueDate = new Date(pYear, pMonth, 10);
+    if (pDate > dueDate) {
+      finalRemarks = finalRemarks ? `${finalRemarks} [Late Payment]` : '[Late Payment]';
+    }
+  }
+
+  try {
     const [result] = await db.query(
-      `INSERT INTO transport_payments 
-        (student_id, student_name, class, amount_paid, payment_date, payment_mode, receipt_number, month_paid, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [student_id || null, student_name, cls, parseFloat(amount_paid), payment_date, payment_mode || 'cash', receipt_number, month_paid, remarks || '']
+      `INSERT INTO fc_payments
+       (student_name, class, amount_paid, payment_date, payment_mode,
+        month_paid, receipt_number, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        student_name.trim(), cls || '',
+        parseFloat(amount_paid),
+        payment_date || now.toISOString().split('T')[0],
+        payment_mode || 'cash',
+        month_paid || '',
+        receipt_number,
+        finalRemarks,
+      ]
     );
 
-    // Auto-update matching due record if it exists (mark as paid or partial)
-    if (student_id && month_paid) {
-      const [dues] = await db.query(
-        "SELECT * FROM transport_dues WHERE student_id = ? AND due_month = ? AND status != 'paid'",
-        [student_id, month_paid]
+    // Update corresponding due to 'paid'
+    if (month_paid) {
+      await db.query(
+        "UPDATE fc_dues SET status = 'paid', last_updated = NOW() WHERE student_name = ? AND due_month = ? AND status != 'paid'",
+        [student_name.trim(), month_paid]
       );
-      if (dues.length > 0) {
-        const due = dues[0];
-        const remaining = parseFloat(due.due_amount) - parseFloat(amount_paid);
-        if (remaining <= 0) {
-          await db.query("UPDATE transport_dues SET status = 'paid' WHERE id = ?", [due.id]);
-        } else {
-          await db.query("UPDATE transport_dues SET due_amount = ?, status = 'partial' WHERE id = ?", [remaining, due.id]);
-        }
-      }
     }
 
-    const [newRow] = await db.query('SELECT * FROM transport_payments WHERE id = ?', [result.insertId]);
-    res.json({ success: true, message: 'Payment recorded!', data: newRow[0] });
+    res.status(201).json({
+      success: true,
+      message: 'Payment recorded successfully',
+      receipt_number,
+      id: result.insertId,
+    });
   } catch (err) {
-    console.error('Payments POST error:', err.message);
+    console.error('POST /payments:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET /api/payments/summary ───────────────────────────────
+router.get('/summary', async (req, res) => {
+  try {
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
+    const [[summary]] = await db.query(
+      `SELECT
+         COALESCE(SUM(amount_paid), 0) AS total_collected,
+         COUNT(*) AS total_payments
+       FROM fc_payments WHERE month_paid = ?`,
+      [monthLabel]
+    );
+    const [[duesSummary]] = await db.query(
+      `SELECT
+         COALESCE(SUM(due_amount), 0) AS total_pending,
+         COUNT(*) AS total_pending_count
+       FROM fc_dues WHERE due_month = ? AND status != 'paid'`,
+      [monthLabel]
+    );
+    res.json({
+      success: true,
+      data: {
+        total_collected: parseFloat(summary.total_collected),
+        total_payments: summary.total_payments,
+        total_pending: parseFloat(duesSummary.total_pending),
+        total_pending_count: duesSummary.total_pending_count,
+      },
+    });
+  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });

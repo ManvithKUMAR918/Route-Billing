@@ -2,67 +2,74 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
+// ── GET /api/dashboard/stats ────────────────────────────────
 router.get('/stats', async (req, res) => {
   try {
-    // Total students
-    const [[{ totalStudents }]] = await db.query("SELECT COUNT(*) AS totalStudents FROM students WHERE status = 'active'");
+    const now = new Date();
+    const monthLabel = now.toLocaleString('default', { month: 'long' }) + ' ' + now.getFullYear();
 
-    // Active transport assignments
-    const [[{ activeTransport }]] = await db.query("SELECT COUNT(*) AS activeTransport FROM transport_assignments WHERE status = 'active'");
+    // Stat 1: Total Active Transport Students
+    const [[{ totalStudents }]] = await db.query(
+      "SELECT COUNT(*) AS totalStudents FROM fc_transport WHERE status = 'active'"
+    );
 
-    // Total collected this month
+    // Stat 2: Active Routes (distinct route names)
+    const [[{ activeRoutes }]] = await db.query(
+      "SELECT COUNT(DISTINCT route_name) AS activeRoutes FROM fc_transport WHERE status = 'active'"
+    );
+
+    // Stat 3: Total Collected This Month
     const [[{ totalCollected }]] = await db.query(
-      'SELECT COALESCE(SUM(amount_paid), 0) AS totalCollected FROM transport_payments'
+      'SELECT COALESCE(SUM(amount_paid), 0) AS totalCollected FROM fc_payments WHERE month_paid = ?',
+      [monthLabel]
     );
 
-    // Pending dues total
+    // Stat 4: Pending Dues This Month
     const [[{ pendingDues }]] = await db.query(
-      "SELECT COALESCE(SUM(due_amount), 0) AS pendingDues FROM transport_dues WHERE status != 'paid'"
+      "SELECT COALESCE(SUM(due_amount), 0) AS pendingDues FROM fc_dues WHERE status != 'paid'",
     );
 
-    // Recent payments (last 5)
-    const [recentPayments] = await db.query(
-      'SELECT id, student_name, amount_paid, payment_date, payment_mode, month_paid FROM transport_payments ORDER BY created_at DESC LIMIT 5'
+    // Monthly Collection Chart (last 6 months)
+    const [monthlyCollection] = await db.query(
+      `SELECT month_paid AS month, COALESCE(SUM(amount_paid), 0) AS amount
+       FROM fc_payments GROUP BY month_paid
+       ORDER BY MIN(payment_date) ASC LIMIT 6`
     );
 
-    // Route summary
+    // Route Summary
     const [routeSummary] = await db.query(
-      "SELECT route_name, COUNT(*) AS count, SUM(monthly_fee) AS total_fee FROM transport_assignments WHERE status = 'active' GROUP BY route_name"
+      `SELECT route_name, COUNT(*) AS count, COALESCE(SUM(monthly_fee), 0) AS total_fee
+       FROM fc_transport WHERE status = 'active' GROUP BY route_name ORDER BY count DESC`
     );
 
-    // Monthly collection (last 6 months) — group by month_paid
-    const [rawMonthly] = await db.query(
-      `SELECT month_paid AS month, SUM(amount_paid) AS amount
-       FROM transport_payments
-       GROUP BY month_paid
-       ORDER BY MIN(payment_date) ASC
-       LIMIT 6`
+    // Recent Payments (last 10)
+    const [recentPayments] = await db.query(
+      `SELECT id, student_name, class, amount_paid, payment_date,
+              payment_mode, month_paid, receipt_number, remarks
+       FROM fc_payments ORDER BY created_at DESC LIMIT 10`
     );
-
-    // Format monthly labels
-    const monthlyCollection = rawMonthly.map(r => ({
-      month: r.month ? r.month.split(' ')[0] : 'Unknown',
-      amount: parseFloat(r.amount) || 0
-    }));
 
     res.json({
       success: true,
       data: {
         totalStudents,
-        activeTransport,
-        totalCollected: parseFloat(totalCollected) || 0,
-        pendingDues: parseFloat(pendingDues) || 0,
-        recentPayments,
+        activeTransport: activeRoutes,
+        totalCollected:  parseFloat(totalCollected) || 0,
+        pendingDues:     parseFloat(pendingDues)     || 0,
+        monthlyCollection: monthlyCollection.map(r => ({
+          month: r.month || 'Unknown',
+          amount: parseFloat(r.amount) || 0,
+        })),
         routeSummary: routeSummary.map(r => ({
           route_name: r.route_name,
-          count: r.count,
-          total_fee: parseFloat(r.total_fee) || 0
+          count:      r.count,
+          total_fee:  parseFloat(r.total_fee) || 0,
         })),
-        monthlyCollection
-      }
+        recentPayments,
+      },
     });
   } catch (err) {
-    console.error('Dashboard stats error:', err.message);
+    console.error('GET /dashboard/stats:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
